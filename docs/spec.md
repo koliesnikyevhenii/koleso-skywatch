@@ -55,13 +55,14 @@ These are non-negotiable. Violating one is a defect regardless of what a phase s
 
 ### F1. Authentication and run modes
 
-The Worker executable supports three modes selected by the first argument.
+The Worker executable supports four modes selected by the first argument.
 
 - **AC-F1.1** — `login` runs an interactive console flow: it reads `ApiId`, `ApiHash`, `PhoneNumber` from configuration, prompts for the verification code and, if required, the 2FA password, writes an encrypted session file to `Telegram:SessionPath`, prints the logged-in user's display name and exits with code 0.
 - **AC-F1.2** — `list-chats` uses the existing session and prints every chat the reader account belongs to: Bot-API-style marked chat id (e.g. `-100…` for channels), type (`Channel`, `Supergroup`, `Group`), title, public username (if any) and the `noforwards` flag. It then exits with code 0.
 - **AC-F1.3** — With no argument the service runs normally and never prompts for input. If the session file is missing or rejected, it logs a `Critical` message telling the operator to run `login`, and exits with a non-zero code.
 - **AC-F1.4** — The session file is encrypted with `Telegram:SessionKey`. Session path and key come from configuration; neither is committed.
-- **AC-F1.5** — Log output in all modes contains none of: API hash, phone number, verification code, 2FA password, session key, bot token (verified by a test that captures logs during a login/run with known secret values).
+- **AC-F1.5** — Log output in all modes contains none of: API hash, phone number, verification code, 2FA password, session key, bot token (verified by an automated log-filter test and an automated run-mode start test with known secret values; the `login` flow is verified manually).
+- **AC-F1.6** — `rescan [--pattern "<regex>"]` reads stored unmatched messages that still have text, runs the configured patterns (or the one-off regex), prints date, source, message id, matching pattern and a text snippet for each hit, and exits with code 0. It is read-only: it sends nothing, writes nothing and applies no migrations.
 
 ### F2. Source management
 
@@ -80,7 +81,7 @@ The Worker executable supports three modes selected by the first argument.
 - **AC-F3.5** — The text used for a message is its text, or the media caption for media messages. Messages with neither are discarded without persistence.
 - **AC-F3.6** — For forwarded messages, the forward origin `(chatId, messageId)` is captured when Telegram provides it.
 - **AC-F3.7** — Disconnects and reconnects are logged (without secrets) and recorded as `ServiceEvents` (from P3 on).
-- **AC-F3.8** — At startup and hourly the service logs the offset between local clock and Telegram server time, and logs a `Warning` if it exceeds 10 seconds.
+- **AC-F3.8** — Hourly the service estimates clock skew passively from live messages of the last hour: the minimum of `ReceivedAt − PublishedAt`, excluding differences over 120 s (catch-up). It logs a `Warning` if the minimum exceeds 10 seconds or any value is below −2 seconds; with no data it logs at `Debug` and skips. No extra Telegram requests are made.
 - **AC-F3.9** — Edited messages (`UpdateEditChannelMessage`, `UpdateEditMessage`) are mapped to `IncomingMessage` with `IsEdit = true` and `EditedAtUtc` set, and handled per F9.
 
 ### F4. Text normalization
@@ -127,7 +128,7 @@ Default patterns:
 - **AC-F6.1** — Every allowlisted message with text is stored as a `Messages` row with metadata (source, Telegram message id, published/received/edited times, content hash, origin key, match result, matched pattern names). Text is stored when the message matched, or when `Storage:StoreUnmatchedText = true`.
 - **AC-F6.2** — `(SourceId, TelegramMessageId)` is unique (database index). A new-message event for an existing key creates no row and no notification.
 - **AC-F6.3** — `ContentHash` is the lowercase hex SHA-256 of the UTF-8 bytes of `NormalizedText.Lower`.
-- **AC-F6.4** — A matched message is a **duplicate** if an earlier matched, non-duplicate message exists, received within `Monitoring:DuplicateWindowMinutes`, with the same origin key or the same content hash. Origin key is checked first.
+- **AC-F6.4** — A matched message is a **duplicate** if an earlier matched, non-duplicate message exists with (a) the same origin key, received within `Monitoring:DuplicateWindowMinutes` — reason `Forward`; or (b) the same content hash, received within `Monitoring:ContentDuplicateWindowMinutes` and, when `Monitoring:ContentDuplicateAcrossSourcesOnly = true`, from a different source — reason `SameText`. Origin key is checked first. The reason is stored in `DuplicateReason`.
 - **AC-F6.5** — A duplicate is stored with `IsDuplicate = true` and `DuplicateOfMessageId` set, and gets a `Notification` with status `SkippedDuplicate` (it is never sent).
 - **AC-F6.6** — A matched, non-duplicate message gets a `Notification` with status `Pending` in the same database transaction as the message row, when `Notifications:Enabled = true`.
 - **AC-F6.7** — When `Notifications:Enabled = false`, no `Notification` rows are created; the match is logged at `Information` with source name and pattern names.
@@ -191,7 +192,7 @@ Default patterns:
 ### F11. Daily report and metrics
 
 - **AC-F11.1** — When `Reporting:DailyReportEnabled` and `Notifications:Enabled` are both true, at `Reporting:DailyReportLocalTime` (default `09:00`, display time zone) the bot posts a report for the previous local calendar day (00:00–24:00 in the display time zone; 23 or 25 hours on DST change days).
-- **AC-F11.2** — The report contains: messages received; matches (total and per pattern); duplicates; unique matches; notifications sent / skipped-stale / failed; labels useful / false / duplicate / unlabeled; precision (useful ÷ labeled) overall and per pattern; latency p50 and p95 of `ReceivedAt − PublishedAt` and `SentAt − ReceivedAt`; reconnect count and total disconnected time; processing errors.
+- **AC-F11.2** — The report contains: messages received; matches (total and per pattern); duplicates (forwards / same text); unique matches; notifications sent / skipped-stale / failed; labels useful / false / duplicate / unlabeled; precision (useful ÷ labeled) overall and per pattern (a message that matched several patterns counts toward each of them, and the report says so); latency p50 and p95 of `ReceivedAt − PublishedAt` and `SentAt − ReceivedAt`; reconnect count and total disconnected time; processing errors.
 - **AC-F11.3** — If reporting is enabled but notifications are disabled, the report is written to the log at `Information` instead.
 - **AC-F11.4** — A missed report time (service down) is sent once on the next start if the previous day's report was not sent; reports are not sent twice for the same day.
 - **AC-F11.5** — Precision with zero labeled items is shown as `n/a`, not as a division error.
@@ -219,11 +220,14 @@ Committed `appsettings.json` contains only non-identifying defaults. Identifying
     "PhoneNumber": "",          // secret
     "SessionPath": "data/session.dat",
     "SessionKey": "",           // secret
-    "UpdateStatePath": "data/updates.state"
+    "UpdateStatePath": "data/updates.state",
+    "UpdateStateSaveIntervalSeconds": 60
   },
   "Monitoring": {
     "Enabled": true,
-    "DuplicateWindowMinutes": 60,
+    "DuplicateWindowMinutes": 60,           // origin-key (forward) duplicates
+    "ContentDuplicateWindowMinutes": 10,    // identical text
+    "ContentDuplicateAcrossSourcesOnly": true,
     "EditHandling": "NotifyOnNewMatch",
     "EditDebounceSeconds": 15,
     "Patterns": [ /* defaults from F5 */ ],
@@ -247,7 +251,9 @@ Committed `appsettings.json` contains only non-identifying defaults. Identifying
     "StoreUnmatchedText": true,
     "RetentionDays": 7,
     "UnmatchedRetentionDays": 3,
-    "MetadataRetentionDays": 30
+    "MetadataRetentionDays": 30,
+    "BusyTimeoutSeconds": 30,
+    "RetentionBatchSize": 500
   }
 }
 ```
@@ -260,7 +266,7 @@ All timestamps are UTC `DateTime` stored with a converter that guarantees `DateT
 
 **Sources** — `Id`, `TelegramChatId` (unique), `Name`, `Type` (Channel/Supergroup/Group), `Username?`, `NoForwards`, `IsEnabled`, `CreatedAtUtc`.
 
-**Messages** — `Id`, `SourceId`, `TelegramMessageId`, `Text?`, `PublishedAtUtc`, `ReceivedAtUtc`, `EditedAtUtc?`, `ContentHash`, `OriginChatId`, `OriginMessageId`, `IsMatched`, `MatchedPatterns?` (comma-separated names), `IsDuplicate`, `DuplicateOfMessageId?`.
+**Messages** — `Id`, `SourceId`, `TelegramMessageId`, `Text?`, `PublishedAtUtc`, `ReceivedAtUtc`, `EditedAtUtc?`, `ContentHash`, `OriginChatId`, `OriginMessageId`, `IsMatched`, `MatchedPatterns?` (comma-separated names), `IsDuplicate`, `DuplicateOfMessageId?`, `DuplicateReason?` (Forward/SameText).
 Indexes: unique `(SourceId, TelegramMessageId)`; `(ContentHash, ReceivedAtUtc)`; `(OriginChatId, OriginMessageId, ReceivedAtUtc)`; `ReceivedAtUtc`.
 
 **Notifications** — `Id`, `MessageId`, `Kind` (New/EditNewMatch/EditReply), `Status` (Pending/Sent/SkippedStale/SkippedDuplicate/Failed), `Attempts`, `CreatedAtUtc`, `SentAtUtc?`, `BotMessageId?`, `Error?`, `PossibleDuplicate`, `StaleReportedAtUtc?`, `Label?` (Useful/False/Duplicate), `LabeledByUserId?`, `LabeledAtUtc?`.
@@ -291,7 +297,7 @@ Web dashboard; mobile app; HTTP API; LLM classification; OCR; voice transcriptio
 3. Precision (labeled useful ÷ labeled), overall and per pattern.
 4. Duplicates removed.
 5. Notifications per hour and per day.
-6. Important mentions missed (found by re-running patterns over stored unmatched text and by manual review).
+6. Important mentions missed (found with the `rescan` run mode (AC-F1.6) over stored unmatched text and by manual review).
 7. Connection stability: reconnects, total downtime, stale-skipped count.
 8. Latency p50/p95, split into Telegram delivery and own processing.
 
