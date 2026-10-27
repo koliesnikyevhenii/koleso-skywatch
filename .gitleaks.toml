@@ -1,8 +1,17 @@
 # gitleaks config for Skywatch (spec C4: no identifying values in git).
-# Default rules stay on; the custom rule below catches Telegram channel/supergroup ids.
+# Default rules stay on; custom rules below catch Telegram bot tokens and channel/supergroup ids.
 
 [extend]
 useDefault = true
+
+# The default telegram-bot-api-token rule needs the word "telegram" nearby;
+# our key is Notifications:BotToken / Notifications__BotToken, so match the bare format too.
+[[rules]]
+id = "telegram-bot-token"
+description = "Telegram bot token (bot id, colon, AA + 33 chars) without a keyword"
+regex = '''(?:^|[^0-9])([0-9]{8,10}:AA[A-Za-z0-9_-]{33})(?:[^A-Za-z0-9_-]|$)'''
+secretGroup = 1
+keywords = [":aa"]
 
 [[rules]]
 id = "telegram-channel-id"
