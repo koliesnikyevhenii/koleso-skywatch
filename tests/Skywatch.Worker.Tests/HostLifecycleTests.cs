@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Logging;
 using Skywatch.Worker.Tests.Fakes;
 
 namespace Skywatch.Worker.Tests;
@@ -9,7 +8,8 @@ public class HostLifecycleTests
     public async Task P0_AC4_worker_host_starts_logs_and_stops_cleanly()
     {
         var logs = new CapturingLoggerProvider();
-        using var host = Program.BuildHost([], logging => logging.AddProvider(logs));
+        using var session = TestHost.ExistingSessionFile();
+        using var host = TestHost.Build([], TestHost.TelegramSettings(session.Path), logs);
         var ct = TestContext.Current.CancellationToken;
 
         await host.StartAsync(ct);
