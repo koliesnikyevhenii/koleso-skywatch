@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Skywatch.Core/Skywatch.Core.csproj" />
+    <Project Path="src/Skywatch.Worker/Skywatch.Worker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Skywatch.Core.Tests/Skywatch.Core.Tests.csproj" />
+    <Project Path="tests/Skywatch.Worker.Tests/Skywatch.Worker.Tests.csproj" />
+  </Folder>
+</Solution>

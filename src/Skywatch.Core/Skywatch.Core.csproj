@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Pure logic only: no package references and no IO (spec C7). -->
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Skywatch.Core.Tests" />
+  </ItemGroup>
+
+</Project>
