@@ -426,3 +426,12 @@ FodyWeavers.xsd
 
 # Official VS Code C# Dev Kit Extension exclusion
 #*.lscache
+
+# Skywatch: runtime data and local config (spec C4, never commit)
+data/
+*.db*
+*.session
+*.state
+appsettings.*.local.json
+appsettings.Development.json
+appsettings.Production.json

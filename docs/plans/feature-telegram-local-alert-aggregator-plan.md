@@ -460,8 +460,8 @@ Each phase ends with `/verify` green and a commit. Tests are named after the AC 
 | `Telegram.Bot` | Bot API client | MIT. |
 | `Microsoft.EntityFrameworkCore.Sqlite` (+ `.Design`), `dotnet-ef` local tool | Persistence, migrations | |
 | `Microsoft.Extensions.Hosting`, `.Hosting.WindowsServices` | Host, Windows Service | |
-| `xunit.v3`, `Shouldly`, `Microsoft.Extensions.TimeProvider.Testing` | Tests | FluentAssertions v8 deliberately avoided (commercial license). Runner: Microsoft.Testing.Platform (`global.json`); exact xUnit v3 package set for MTP verified in P0 and recorded here. |
-| gitleaks (CLI) | Secret scan locally, in the pre-commit hook and in CI | Free; installed via winget locally. Command syntax depends on the version installed in P0. |
+| `xunit.v3.mtp-v2`, `Shouldly`, `Microsoft.Extensions.TimeProvider.Testing` | Tests | FluentAssertions v8 deliberately avoided (commercial license). Runner: Microsoft.Testing.Platform (`global.json`). Verified in P0: `xunit.v3.mtp-v2` 4.0.2 alone (test projects are `OutputType=Exe`, no `Microsoft.NET.Test.Sdk`, no VSTest adapter), Shouldly 4.3.0. |
+| gitleaks (CLI) | Secret scan locally, in the pre-commit hook and in CI | Free; installed via winget locally. P0 uses v8.30.1: `gitleaks git --staged` (staged) and `gitleaks git` (history); CI downloads the same version with checksum check. |
 | GitHub Actions | CI | Free for public repos. |
 | Telegram `api_id`/`api_hash` | my.telegram.org | Per reader account. |
 | Bot via @BotFather, private test group | Delivery | |

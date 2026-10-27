@@ -51,6 +51,12 @@ dotnet ef migrations add <Name> --project src/Skywatch.Worker
 
 ## Verification
 
-`/verify` (`build/verify.ps1`) runs restore → build (warnings as errors) → test → `dotnet format --verify-no-changes` → gitleaks. It must be green before every commit. CI (`.github/workflows/ci.yml`) runs the same steps. *Filled in during P0.*
+`/verify` (`build/verify.ps1`) runs restore → build (warnings as errors) → test → `dotnet format --verify-no-changes` → gitleaks. It must be green before every commit. CI (`.github/workflows/ci.yml`) runs the same steps.
+
+- Run: `powershell -NoProfile -File build/verify.ps1` (Windows PowerShell 5.1) or `pwsh build/verify.ps1` (CI). Stops at the first failing stage with exit code 1.
+- gitleaks (v8.30, `winget install gitleaks`) runs twice: `gitleaks git --staged` and `gitleaks git` (full history), both with `.gitleaks.toml`. Custom rules: bare Telegram bot token, `-100` + 10-digit channel id. Fake ids for tests: `-1000000000NNN` (allowlisted).
+- `build/install-hooks.ps1` installs the gitleaks pre-commit hook; run it once per clone.
+- `dotnet test` uses Microsoft.Testing.Platform (`global.json`); zero tests run is a failure (exit code 8).
+- `nuget.config` clears machine package sources (CPM fails on multiple sources), keep nuget.org only.
 
 If gitleaks finds anything, stop immediately: don't commit, don't "fix forward", report it.
