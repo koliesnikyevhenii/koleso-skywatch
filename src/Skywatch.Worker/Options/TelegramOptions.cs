@@ -17,6 +17,10 @@ internal sealed class TelegramOptions
 
     public string SessionKey { get; set; } = "";
 
+    public string UpdateStatePath { get; set; } = "data/updates.state";
+
+    public int UpdateStateSaveIntervalSeconds { get; set; } = 60;
+
     /// <summary>
     /// Answers WTelegramClient's config callback. <see langword="null"/> means "use the library default";
     /// interactive values (verification code, password) are supplied by the command that needs them.

@@ -1,9 +1,11 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Configuration.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Skywatch.Worker.Hosting;
 using Skywatch.Worker.Options;
 using Skywatch.Worker.Telegram;
 
@@ -48,7 +50,7 @@ public partial class Program
         if (mode == RunMode.Run)
         {
             await host.WaitForShutdownAsync(ct);
-            return 0;
+            return host.Services.GetRequiredService<ProcessingService>().Failed ? 1 : 0;
         }
 
         try
@@ -79,10 +81,16 @@ public partial class Program
         builder.Services.AddOptions<TelegramOptions>().BindConfiguration(TelegramOptions.SectionName).ValidateOnStart();
         builder.Services.AddSingleton<IValidateOptions<TelegramOptions>>(new TelegramOptionsValidator(mode));
         var monitoring = builder.Services.AddOptions<MonitoringOptions>().BindConfiguration(MonitoringOptions.SectionName);
+        builder.Services.TryAddSingleton(TimeProvider.System);
         if (mode == RunMode.Run)
         {
             monitoring.ValidateOnStart();
             builder.Services.AddSingleton<IValidateOptions<MonitoringOptions>, MonitoringOptionsValidator>();
+
+            // TryAdd: tests register FakeUpdateSource first.
+            builder.Services.TryAddSingleton<ITelegramUpdateSource, WTelegramUpdateSource>();
+            builder.Services.AddSingleton<ProcessingService>();
+            builder.Services.AddHostedService(sp => sp.GetRequiredService<ProcessingService>());
         }
 
         builder.Services.AddSingleton<LoginCommand>();

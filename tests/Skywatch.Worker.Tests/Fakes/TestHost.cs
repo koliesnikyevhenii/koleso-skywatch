@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Skywatch.Worker.Telegram;
 
 namespace Skywatch.Worker.Tests.Fakes;
 
@@ -15,7 +17,15 @@ internal static class TestHost
     public const string FakeSessionKey = "fake-session-key-do-not-log";
     public const string FakePhone = "+380001112233";
 
-    public static Action<HostApplicationBuilder> Configure(IDictionary<string, string?> settings, CapturingLoggerProvider? logs = null) =>
+    /// <summary>
+    /// The update source is always a fake (by default one that never emits), so a run-mode host in a test never
+    /// connects to Telegram.
+    /// </summary>
+    public static Action<HostApplicationBuilder> Configure(
+        IDictionary<string, string?> settings,
+        CapturingLoggerProvider? logs = null,
+        ITelegramUpdateSource? source = null,
+        TimeProvider? time = null) =>
         builder =>
         {
             builder.Configuration.Sources.Clear();
@@ -24,10 +34,34 @@ internal static class TestHost
             {
                 builder.Logging.AddProvider(logs);
             }
+
+            builder.Services.AddSingleton(source ?? new FakeUpdateSource());
+            if (time is not null)
+            {
+                builder.Services.AddSingleton(time);
+            }
         };
 
-    public static IHost Build(string[] args, IDictionary<string, string?> settings, CapturingLoggerProvider? logs = null) =>
-        Program.BuildHost(args, Configure(settings, logs));
+    public static IHost Build(
+        string[] args,
+        IDictionary<string, string?> settings,
+        CapturingLoggerProvider? logs = null,
+        ITelegramUpdateSource? source = null,
+        TimeProvider? time = null) =>
+        Program.BuildHost(args, Configure(settings, logs, source, time));
+
+    /// <summary>Valid run-mode settings: Telegram settings plus the given sources as <c>Monitoring:Sources</c>.</summary>
+    public static Dictionary<string, string?> RunModeSettings(string sessionPath, params (long ChatId, string Name)[] sources)
+    {
+        var settings = TelegramSettings(sessionPath);
+        for (var i = 0; i < sources.Length; i++)
+        {
+            settings[$"Monitoring:Sources:{i}:ChatId"] = sources[i].ChatId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            settings[$"Monitoring:Sources:{i}:Name"] = sources[i].Name;
+        }
+
+        return settings;
+    }
 
     /// <summary>Complete, valid Telegram settings pointing at <paramref name="sessionPath"/>.</summary>
     public static Dictionary<string, string?> TelegramSettings(string sessionPath) => new()
