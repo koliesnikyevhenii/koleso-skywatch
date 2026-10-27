@@ -1,0 +1,18 @@
+# gitleaks config for Skywatch (spec C4: no identifying values in git).
+# Default rules stay on; the custom rule below catches Telegram channel/supergroup ids.
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "telegram-channel-id"
+description = "Telegram marked channel/supergroup id (-100 followed by 10 digits)"
+regex = '''(?:^|[^0-9])(-100[0-9]{10})(?:[^0-9]|$)'''
+secretGroup = 1
+keywords = ["-100"]
+
+# Obviously fake ids for tests and examples: -100 + seven zeros + three digits, e.g. -1000000000001.
+# -1001234567890 is the placeholder already committed in docs/source (history cannot be rewritten).
+[[rules.allowlists]]
+description = "Fake test ids"
+regexes = ['''^-1000000000[0-9]{3}$''', '''^-1001234567890$''']
