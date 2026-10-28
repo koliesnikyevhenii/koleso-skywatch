@@ -12,6 +12,7 @@ using Skywatch.Worker.Options;
 using Skywatch.Worker.Persistence;
 using Skywatch.Worker.Pipeline;
 using Skywatch.Worker.Telegram;
+using Telegram.Bot;
 
 return await Program.RunAsync(args, configure: null, CancellationToken.None);
 
@@ -93,7 +94,12 @@ public partial class Program
             builder.Services.AddOptions<StorageOptions>().BindConfiguration(StorageOptions.SectionName).ValidateOnStart();
             builder.Services.AddSingleton<IValidateOptions<StorageOptions>, StorageOptionsValidator>();
             builder.Services.AddOptions<NotificationOptions>().BindConfiguration(NotificationOptions.SectionName).ValidateOnStart();
-            builder.Services.AddSingleton<IValidateOptions<NotificationOptions>, NotificationOptionsValidator>();
+            builder.Services.AddSingleton<IValidateOptions<NotificationOptions>>(new NotificationOptionsValidator());
+            builder.Services.AddSingleton(sp => TimeZoneResolver.ResolveOrThrow(sp.GetRequiredService<IOptions<NotificationOptions>>().Value.DisplayTimeZone));
+
+            // Resolved only when something sends, which requires Notifications:Enabled (and so a BotToken).
+            builder.Services.TryAddSingleton<ITelegramBotClient>(sp => new TelegramBotClient(sp.GetRequiredService<IOptions<NotificationOptions>>().Value.BotToken));
+            builder.Services.TryAddSingleton<INotificationSender, BotNotificationSender>();
             builder.Services.AddDbContextFactory<SkywatchDbContext>(
                 (sp, db) => db.UseSqlite(sp.GetRequiredService<IOptions<StorageOptions>>().Value.ConnectionString));
 
@@ -116,7 +122,16 @@ public partial class Program
         var host = builder.Build();
         var logger = host.Services.GetRequiredService<ILogger<Program>>();
         host.Services.GetRequiredService<IHostApplicationLifetime>()
-            .ApplicationStarted.Register(() => LogStarted(logger));
+            .ApplicationStarted.Register(() =>
+            {
+                LogStarted(logger);
+                if (mode == RunMode.Run)
+                {
+                    var zone = host.Services.GetRequiredService<TimeZoneInfo>();
+                    var now = TimeZoneInfo.ConvertTime(host.Services.GetRequiredService<TimeProvider>().GetUtcNow(), zone);
+                    LogDisplayTimeZone(logger, zone.Id, now);
+                }
+            });
         return host;
     }
 
@@ -156,6 +171,9 @@ public partial class Program
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Skywatch started")]
     private static partial void LogStarted(ILogger logger);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Display time zone {Zone}; local time now {Now:yyyy-MM-dd HH:mm:ss zzz}.")]
+    private static partial void LogDisplayTimeZone(ILogger logger, string zone, DateTimeOffset now);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Pattern '{Pattern}' timed out and is treated as no match for this message.")]
     private static partial void LogPatternTimedOut(ILogger logger, string pattern);
