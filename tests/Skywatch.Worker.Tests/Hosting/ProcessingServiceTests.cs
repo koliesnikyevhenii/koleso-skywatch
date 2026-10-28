@@ -124,11 +124,12 @@ public sealed class ProcessingServiceTests : IDisposable
         var source = new FakeUpdateSource { Sources = [Resolved(_sourceA, _sourceAName)] };
         using var host = await StartAsync(source);
 
+        // Advance the clock only once the previous event, including its save check, is fully handled.
         source.Emit(Message(1, "Перше", TimeSpan.FromSeconds(1)));
-        await MessageLogged(1);
+        await Eventually.ShouldHappen(() => source.Handled == 1, "message 1 handled");
         _time.Advance(TimeSpan.FromSeconds(59));
         source.Emit(Message(2, "Друге", TimeSpan.FromSeconds(1)));
-        await MessageLogged(2);
+        await Eventually.ShouldHappen(() => source.Handled == 2, "message 2 handled");
         source.SaveCalls.ShouldBeEmpty();
 
         _time.Advance(TimeSpan.FromSeconds(1));

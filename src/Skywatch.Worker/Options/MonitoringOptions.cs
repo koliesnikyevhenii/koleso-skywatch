@@ -12,6 +12,15 @@ internal sealed class MonitoringOptions
 
     /// <summary>Spec F5: named patterns, evaluated in this order. Defaults live in appsettings.json.</summary>
     public List<PatternOptions> Patterns { get; set; } = [];
+
+    /// <summary>AC-F6.4 (a): window for forward duplicates (same origin key).</summary>
+    public int DuplicateWindowMinutes { get; set; } = 60;
+
+    /// <summary>AC-F6.4 (b): window for identical-text duplicates.</summary>
+    public int ContentDuplicateWindowMinutes { get; set; } = 10;
+
+    /// <summary>AC-F6.4 (b): when <see langword="true"/>, a repeat of the same text in the same source is always sent.</summary>
+    public bool ContentDuplicateAcrossSourcesOnly { get; set; } = true;
 }
 
 internal sealed class PatternOptions
@@ -59,6 +68,16 @@ internal sealed class MonitoringOptionsValidator : IValidateOptions<MonitoringOp
         foreach (var duplicate in options.Sources.GroupBy(s => s.ChatId).Where(g => g.Count() > 1))
         {
             failures.Add($"Monitoring:Sources: ChatId {duplicate.Key} is listed more than once.");
+        }
+
+        if (options.DuplicateWindowMinutes <= 0)
+        {
+            failures.Add("Monitoring:DuplicateWindowMinutes must be greater than 0.");
+        }
+
+        if (options.ContentDuplicateWindowMinutes <= 0)
+        {
+            failures.Add("Monitoring:ContentDuplicateWindowMinutes must be greater than 0.");
         }
 
         ValidatePatterns(options.Patterns, failures);

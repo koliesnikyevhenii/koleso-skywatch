@@ -3,24 +3,23 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Skywatch.Core.Filtering;
-using Skywatch.Core.Normalization;
 using Skywatch.Core.Time;
 using Skywatch.Worker.Options;
 using Skywatch.Worker.Persistence;
 using Skywatch.Worker.Persistence.Entities;
+using Skywatch.Worker.Pipeline;
 using Skywatch.Worker.Telegram;
 
 namespace Skywatch.Worker.Hosting;
 
 /// <summary>
 /// The single consumer of the update source: resolve and upsert sources, read events, save the update state, and
-/// record lifecycle and connection changes as service events (AC-F3.7).
-/// Temporary body (P1b, P2): logs each message and its pattern matches safely; the matching pipeline replaces it in P3b.
+/// record lifecycle and connection changes as service events (AC-F3.7). New messages go to
+/// <see cref="MessageProcessor"/>; edits are logged and ignored until P5.
 /// </summary>
 internal sealed partial class ProcessingService(
     ITelegramUpdateSource source,
-    KeywordFilter filter,
+    MessageProcessor processor,
     IDbContextFactory<SkywatchDbContext> dbFactory,
     IOptions<TelegramOptions> telegram,
     TimeProvider time,
@@ -156,11 +155,10 @@ internal sealed partial class ProcessingService(
                 var name = _sourceNames.GetValueOrDefault(m.ChatId, "?");
                 LogMessage(logger, name, m.ChatId, m.MessageId, m.Text.Length, latency, m.IsEdit);
 
-                var result = filter.Match(TextNormalizer.Normalize(m.Text));
-                if (result.IsMatch)
+                // Not cancellable: messages read during shutdown are still processed while the channel drains (N4).
+                if (!m.IsEdit)
                 {
-                    var patterns = string.Join(", ", result.Hits.Select(h => h.PatternName));
-                    LogMatch(logger, name, m.ChatId, m.MessageId, patterns, latency);
+                    await processor.ProcessAsync(m, CancellationToken.None);
                 }
 
                 break;
@@ -223,9 +221,6 @@ internal sealed partial class ProcessingService(
 
     [LoggerMessage(Level = LogLevel.Information, Message = "{Source} ({ChatId}): message {MessageId}, {Length} chars, latency {LatencySeconds:0.0} s, edit={IsEdit}")]
     private static partial void LogMessage(ILogger logger, string source, long chatId, int messageId, int length, double latencySeconds, bool isEdit);
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "{Source} ({ChatId}): message {MessageId} matched {Patterns}, latency {LatencySeconds:0.0} s")]
-    private static partial void LogMatch(ILogger logger, string source, long chatId, int messageId, string patterns, double latencySeconds);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Telegram disconnected at {AtUtc:O}.")]
     private static partial void LogDisconnected(ILogger logger, DateTime atUtc);

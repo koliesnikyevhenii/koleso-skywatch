@@ -10,6 +10,7 @@ using Skywatch.Core.Filtering;
 using Skywatch.Worker.Hosting;
 using Skywatch.Worker.Options;
 using Skywatch.Worker.Persistence;
+using Skywatch.Worker.Pipeline;
 using Skywatch.Worker.Telegram;
 
 return await Program.RunAsync(args, configure: null, CancellationToken.None);
@@ -91,6 +92,8 @@ public partial class Program
             builder.Services.AddSingleton<IValidateOptions<MonitoringOptions>, MonitoringOptionsValidator>();
             builder.Services.AddOptions<StorageOptions>().BindConfiguration(StorageOptions.SectionName).ValidateOnStart();
             builder.Services.AddSingleton<IValidateOptions<StorageOptions>, StorageOptionsValidator>();
+            builder.Services.AddOptions<NotificationOptions>().BindConfiguration(NotificationOptions.SectionName).ValidateOnStart();
+            builder.Services.AddSingleton<IValidateOptions<NotificationOptions>, NotificationOptionsValidator>();
             builder.Services.AddDbContextFactory<SkywatchDbContext>(
                 (sp, db) => db.UseSqlite(sp.GetRequiredService<IOptions<StorageOptions>>().Value.ConnectionString));
 
@@ -100,6 +103,8 @@ public partial class Program
             // TryAdd: tests register FakeUpdateSource first.
             builder.Services.TryAddSingleton<ITelegramUpdateSource, WTelegramUpdateSource>();
             builder.Services.AddSingleton(CreateKeywordFilter);
+            builder.Services.AddSingleton<DuplicateDetector>();
+            builder.Services.AddSingleton<MessageProcessor>();
             builder.Services.AddSingleton<ProcessingService>();
             builder.Services.AddHostedService(sp => sp.GetRequiredService<ProcessingService>());
             builder.Services.AddHostedService<RetentionService>();
