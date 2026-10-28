@@ -212,6 +212,63 @@ public sealed class ProcessingServiceTests : IDisposable
         await host.StopAsync(TestContext.Current.CancellationToken);
     }
 
+    // Plan P2: ProcessingService logs matches with source, pattern names and latency; still no text.
+    [Fact]
+    public async Task P2_matching_message_is_logged_with_source_pattern_names_and_latency_but_not_text()
+    {
+        const string text = "Перевірка: тест зв'язку";
+        var source = new FakeUpdateSource { Sources = [Resolved(_sourceA, _sourceAName)] };
+        using var host = await StartAsync(source);
+
+        source.Emit(Message(7, text, TimeSpan.FromSeconds(2)));
+
+        await Eventually.ShouldHappen(() => MatchLines(7).Any(), "match logged");
+        var line = MatchLines(7).Single();
+        line.ShouldContain(_sourceAName);
+        line.ShouldContain(TestHost.ProbePattern);
+        line.ShouldContain("latency 2");
+        _logs.Lines.ShouldNotContain(l => l.Contains(text));
+        await host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task P2_message_without_a_mention_logs_no_match()
+    {
+        var source = new FakeUpdateSource { Sources = [Resolved(_sourceA, _sourceAName)] };
+        using var host = await StartAsync(source);
+
+        source.Emit(Message(8, "Без згадок", TimeSpan.FromSeconds(1)));
+        source.Emit(Message(9, "Ще один тест", TimeSpan.FromSeconds(1)));
+
+        await Eventually.ShouldHappen(() => MatchLines(9).Any(), "the later matching message is logged");
+        MatchLines(8).ShouldBeEmpty();
+        await host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    // AC-F5.10: a regex timeout is logged at Warning with the pattern name; the other patterns still run.
+    [Fact]
+    public async Task AC_F5_10_regex_timeout_is_logged_as_warning_with_pattern_name_and_processing_continues()
+    {
+        var source = new FakeUpdateSource { Sources = [Resolved(_sourceA, _sourceAName)] };
+        using var host = await StartAsync(source, new()
+        {
+            ["Monitoring:Patterns:0:Name"] = "Slow",
+            ["Monitoring:Patterns:0:Regex"] = @"^(\w+\s?)*$",
+            ["Monitoring:Patterns:1:Name"] = TestHost.ProbePattern,
+            ["Monitoring:Patterns:1:Regex"] = @"\bтест\b",
+        });
+
+        source.Emit(Message(10, "тест " + new string('а', 5000) + "!", TimeSpan.FromSeconds(1)));
+
+        await Eventually.ShouldHappen(() => MatchLines(10).Any(), "the message is still matched by the other pattern");
+        _logs.Entries.ShouldContain(e => e.Level == LogLevel.Warning && e.Message.Contains("Slow") && e.Message.Contains("timed out"));
+        MatchLines(10).Single().ShouldNotContain("Slow");
+        await host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    private IEnumerable<string> MatchLines(int messageId) =>
+        _logs.Lines.Where(l => l.Contains($"message {messageId} matched"));
+
     private int ClockEntries(LogLevel level) =>
         _logs.Entries.Count(e => e.Level == level && e.Message.Contains("clock", StringComparison.OrdinalIgnoreCase));
 }
