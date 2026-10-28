@@ -68,7 +68,7 @@ internal static class TestHost
 
     /// <summary>
     /// Complete, valid Telegram settings pointing at <paramref name="sessionPath"/>, plus <see cref="ProbePattern"/>
-    /// (matches the word "тест").
+    /// (matches the word "тест") and a fresh database file.
     /// </summary>
     public static Dictionary<string, string?> TelegramSettings(string sessionPath) => new()
     {
@@ -79,7 +79,32 @@ internal static class TestHost
         ["Telegram:SessionKey"] = FakeSessionKey,
         ["Monitoring:Patterns:0:Name"] = ProbePattern,
         ["Monitoring:Patterns:0:Regex"] = @"\bтест\b",
+        ["Storage:DatabasePath"] = TempDatabasePath(),
     };
+
+    private static readonly string _databaseDirectory = Path.Combine(Path.GetTempPath(), "skywatch-tests");
+
+    /// <summary>
+    /// A fresh database file path. Pooled SQLite connections keep the file open after the host stops, so files are
+    /// not deleted per test; leftovers from earlier runs are removed instead.
+    /// </summary>
+    public static string TempDatabasePath() => Path.Combine(_databaseDirectory, $"{Guid.NewGuid():N}.db");
+
+    static TestHost()
+    {
+        Directory.CreateDirectory(_databaseDirectory);
+        foreach (var file in Directory.EnumerateFiles(_databaseDirectory).Where(f => File.GetLastWriteTimeUtc(f) < DateTime.UtcNow.AddHours(-1)))
+        {
+            try
+            {
+                File.Delete(file);
+            }
+            catch (IOException)
+            {
+                // Still open by a parallel test run; a later run removes it.
+            }
+        }
+    }
 
     /// <summary>Replaces every configured pattern with the given ones.</summary>
     public static void SetPatterns(Dictionary<string, string?> settings, params (string Name, string Regex, bool Enabled)[] patterns)

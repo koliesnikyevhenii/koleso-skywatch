@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -6,17 +7,21 @@ using Skywatch.Core.Filtering;
 using Skywatch.Core.Normalization;
 using Skywatch.Core.Time;
 using Skywatch.Worker.Options;
+using Skywatch.Worker.Persistence;
+using Skywatch.Worker.Persistence.Entities;
 using Skywatch.Worker.Telegram;
 
 namespace Skywatch.Worker.Hosting;
 
 /// <summary>
-/// The single consumer of the update source: resolve sources, read events, save the update state.
+/// The single consumer of the update source: resolve and upsert sources, read events, save the update state, and
+/// record lifecycle and connection changes as service events (AC-F3.7).
 /// Temporary body (P1b, P2): logs each message and its pattern matches safely; the matching pipeline replaces it in P3b.
 /// </summary>
 internal sealed partial class ProcessingService(
     ITelegramUpdateSource source,
     KeywordFilter filter,
+    IDbContextFactory<SkywatchDbContext> dbFactory,
     IOptions<TelegramOptions> telegram,
     TimeProvider time,
     IHostApplicationLifetime lifetime,
@@ -55,13 +60,17 @@ internal sealed partial class ProcessingService(
 
         LogSources(sources);
 
+        // Not cancellable: a stop during startup must still reach the loop below, which drains the channel (N4).
+        await UpsertSourcesAsync(sources, CancellationToken.None);
+        await RecordAsync(ServiceEventKind.Started, time.GetUtcNow().UtcDateTime, CancellationToken.None);
+
         var saveInterval = TimeSpan.FromSeconds(telegram.Value.UpdateStateSaveIntervalSeconds);
         var lastSave = time.GetUtcNow();
 
         // On shutdown the source stops intake and still yields what is queued, so this loop drains the channel.
         await foreach (var sourceEvent in source.ReadAllAsync(stoppingToken))
         {
-            Handle(sourceEvent);
+            await HandleAsync(sourceEvent);
 
             // Single consumer: once the event above is handled, nothing is in flight.
             if (time.GetUtcNow() - lastSave >= saveInterval && await source.TrySaveStateAsync(CancellationToken.None))
@@ -72,6 +81,45 @@ internal sealed partial class ProcessingService(
 
         // Shutdown: the channel is drained, so the final save cannot skip an event. Not cancellable on purpose.
         await source.TrySaveStateAsync(CancellationToken.None);
+        await RecordAsync(ServiceEventKind.Stopped, time.GetUtcNow().UtcDateTime, CancellationToken.None);
+    }
+
+    /// <summary>
+    /// AC-F2.2: resolved sources are inserted or updated in place. Configuration is the source of truth for
+    /// <c>IsEnabled</c>: a stored source is enabled exactly when it is among the enabled configured sources.
+    /// </summary>
+    private async Task UpsertSourcesAsync(IReadOnlyList<ResolvedSource> sources, CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var stored = await db.Sources.ToDictionaryAsync(s => s.TelegramChatId, ct);
+        var enabled = sources.Select(s => s.ChatId).ToHashSet();
+        foreach (var row in stored.Values)
+        {
+            row.IsEnabled = enabled.Contains(row.TelegramChatId);
+        }
+
+        foreach (var s in sources.Where(s => s.Resolved))
+        {
+            if (!stored.TryGetValue(s.ChatId, out var row))
+            {
+                row = new Source { TelegramChatId = s.ChatId, IsEnabled = true, CreatedAtUtc = time.GetUtcNow().UtcDateTime };
+                db.Sources.Add(row);
+            }
+
+            row.Name = s.Name;
+            row.Type = s.Type;
+            row.Username = s.Username;
+            row.NoForwards = s.NoForwards;
+        }
+
+        await db.SaveChangesAsync(ct);
+    }
+
+    private async Task RecordAsync(ServiceEventKind kind, DateTime occurredAtUtc, CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        db.ServiceEvents.Add(new ServiceEvent { Kind = kind, OccurredAtUtc = occurredAtUtc });
+        await db.SaveChangesAsync(ct);
     }
 
     private void LogSources(IReadOnlyList<ResolvedSource> sources)
@@ -93,7 +141,7 @@ internal sealed partial class ProcessingService(
         LogListening(logger, resolved);
     }
 
-    private void Handle(SourceEvent sourceEvent)
+    private async Task HandleAsync(SourceEvent sourceEvent)
     {
         switch (sourceEvent)
         {
@@ -116,11 +164,14 @@ internal sealed partial class ProcessingService(
                 }
 
                 break;
+            // Not cancellable: an event read during shutdown is still recorded while the channel drains.
             case ConnectionStateChanged { State: ConnectionState.Disconnected } c:
                 LogDisconnected(logger, c.AtUtc);
+                await RecordAsync(ServiceEventKind.Disconnected, c.AtUtc, CancellationToken.None);
                 break;
             case ConnectionStateChanged c:
                 LogReconnected(logger, c.AtUtc);
+                await RecordAsync(ServiceEventKind.Reconnected, c.AtUtc, CancellationToken.None);
                 break;
         }
     }

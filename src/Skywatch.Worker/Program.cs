@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Configuration.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -8,6 +9,7 @@ using Microsoft.Extensions.Options;
 using Skywatch.Core.Filtering;
 using Skywatch.Worker.Hosting;
 using Skywatch.Worker.Options;
+using Skywatch.Worker.Persistence;
 using Skywatch.Worker.Telegram;
 
 return await Program.RunAsync(args, configure: null, CancellationToken.None);
@@ -87,12 +89,20 @@ public partial class Program
         {
             monitoring.ValidateOnStart();
             builder.Services.AddSingleton<IValidateOptions<MonitoringOptions>, MonitoringOptionsValidator>();
+            builder.Services.AddOptions<StorageOptions>().BindConfiguration(StorageOptions.SectionName).ValidateOnStart();
+            builder.Services.AddSingleton<IValidateOptions<StorageOptions>, StorageOptionsValidator>();
+            builder.Services.AddDbContextFactory<SkywatchDbContext>(
+                (sp, db) => db.UseSqlite(sp.GetRequiredService<IOptions<StorageOptions>>().Value.ConnectionString));
+
+            // Hosted services start in registration order: the database is migrated before anything uses it.
+            builder.Services.AddHostedService<DatabaseInitializer>();
 
             // TryAdd: tests register FakeUpdateSource first.
             builder.Services.TryAddSingleton<ITelegramUpdateSource, WTelegramUpdateSource>();
             builder.Services.AddSingleton(CreateKeywordFilter);
             builder.Services.AddSingleton<ProcessingService>();
             builder.Services.AddHostedService(sp => sp.GetRequiredService<ProcessingService>());
+            builder.Services.AddHostedService<RetentionService>();
         }
 
         builder.Services.AddSingleton<LoginCommand>();
