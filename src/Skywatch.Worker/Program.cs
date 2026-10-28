@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Skywatch.Core.Filtering;
 using Skywatch.Worker.Hosting;
 using Skywatch.Worker.Options;
 using Skywatch.Worker.Telegram;
@@ -89,6 +90,7 @@ public partial class Program
 
             // TryAdd: tests register FakeUpdateSource first.
             builder.Services.TryAddSingleton<ITelegramUpdateSource, WTelegramUpdateSource>();
+            builder.Services.AddSingleton(CreateKeywordFilter);
             builder.Services.AddSingleton<ProcessingService>();
             builder.Services.AddHostedService(sp => sp.GetRequiredService<ProcessingService>());
         }
@@ -101,6 +103,14 @@ public partial class Program
         host.Services.GetRequiredService<IHostApplicationLifetime>()
             .ApplicationStarted.Register(() => LogStarted(logger));
         return host;
+    }
+
+    /// <summary>Patterns are compiled once (AC-F5.9); a match timeout is logged with the pattern name (AC-F5.10).</summary>
+    private static KeywordFilter CreateKeywordFilter(IServiceProvider services)
+    {
+        var logger = services.GetRequiredService<ILogger<KeywordFilter>>();
+        var patterns = services.GetRequiredService<IOptions<MonitoringOptions>>().Value.Patterns.Select(p => p.ToDefinition());
+        return new KeywordFilter(patterns, name => LogPatternTimedOut(logger, name));
     }
 
     internal static RunMode? ParseRunMode(string[] args) => args switch
@@ -131,6 +141,9 @@ public partial class Program
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Skywatch started")]
     private static partial void LogStarted(ILogger logger);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Pattern '{Pattern}' timed out and is treated as no match for this message.")]
+    private static partial void LogPatternTimedOut(ILogger logger, string pattern);
 
     [LoggerMessage(Level = LogLevel.Critical, Message = "Unknown run mode '{Mode}'. Use `login`, `list-chats` or no argument.")]
     private static partial void LogUnknownRunMode(ILogger logger, string mode);

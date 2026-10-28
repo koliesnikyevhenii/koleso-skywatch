@@ -63,7 +63,13 @@ internal static class TestHost
         return settings;
     }
 
-    /// <summary>Complete, valid Telegram settings pointing at <paramref name="sessionPath"/>.</summary>
+    /// <summary>The test pattern every settings set carries, because run mode needs at least one enabled pattern (AC-F5.9).</summary>
+    public const string ProbePattern = "Probe";
+
+    /// <summary>
+    /// Complete, valid Telegram settings pointing at <paramref name="sessionPath"/>, plus <see cref="ProbePattern"/>
+    /// (matches the word "тест").
+    /// </summary>
     public static Dictionary<string, string?> TelegramSettings(string sessionPath) => new()
     {
         ["Telegram:ApiId"] = "12345",
@@ -71,7 +77,25 @@ internal static class TestHost
         ["Telegram:PhoneNumber"] = FakePhone,
         ["Telegram:SessionPath"] = sessionPath,
         ["Telegram:SessionKey"] = FakeSessionKey,
+        ["Monitoring:Patterns:0:Name"] = ProbePattern,
+        ["Monitoring:Patterns:0:Regex"] = @"\bтест\b",
     };
+
+    /// <summary>Replaces every configured pattern with the given ones.</summary>
+    public static void SetPatterns(Dictionary<string, string?> settings, params (string Name, string Regex, bool Enabled)[] patterns)
+    {
+        foreach (var key in settings.Keys.Where(k => k.StartsWith("Monitoring:Patterns:", StringComparison.Ordinal)).ToList())
+        {
+            settings.Remove(key);
+        }
+
+        for (var i = 0; i < patterns.Length; i++)
+        {
+            settings[$"Monitoring:Patterns:{i}:Name"] = patterns[i].Name;
+            settings[$"Monitoring:Patterns:{i}:Regex"] = patterns[i].Regex;
+            settings[$"Monitoring:Patterns:{i}:Enabled"] = patterns[i].Enabled ? "true" : "false";
+        }
+    }
 
     /// <summary>A path in the temp directory that does not exist.</summary>
     public static string MissingSessionPath() => Path.Combine(Path.GetTempPath(), $"skywatch-test-{Guid.NewGuid():N}", "session.dat");

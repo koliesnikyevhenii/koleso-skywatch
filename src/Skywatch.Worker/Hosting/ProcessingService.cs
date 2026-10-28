@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Skywatch.Core.Filtering;
+using Skywatch.Core.Normalization;
 using Skywatch.Core.Time;
 using Skywatch.Worker.Options;
 using Skywatch.Worker.Telegram;
@@ -10,10 +12,11 @@ namespace Skywatch.Worker.Hosting;
 
 /// <summary>
 /// The single consumer of the update source: resolve sources, read events, save the update state.
-/// P1b body: logs each message safely; the matching pipeline replaces it in P3b.
+/// Temporary body (P1b, P2): logs each message and its pattern matches safely; the matching pipeline replaces it in P3b.
 /// </summary>
 internal sealed partial class ProcessingService(
     ITelegramUpdateSource source,
+    KeywordFilter filter,
     IOptions<TelegramOptions> telegram,
     TimeProvider time,
     IHostApplicationLifetime lifetime,
@@ -104,6 +107,14 @@ internal sealed partial class ProcessingService(
                 var latency = (m.ReceivedAtUtc - m.PublishedAtUtc).TotalSeconds;
                 var name = _sourceNames.GetValueOrDefault(m.ChatId, "?");
                 LogMessage(logger, name, m.ChatId, m.MessageId, m.Text.Length, latency, m.IsEdit);
+
+                var result = filter.Match(TextNormalizer.Normalize(m.Text));
+                if (result.IsMatch)
+                {
+                    var patterns = string.Join(", ", result.Hits.Select(h => h.PatternName));
+                    LogMatch(logger, name, m.ChatId, m.MessageId, patterns, latency);
+                }
+
                 break;
             case ConnectionStateChanged { State: ConnectionState.Disconnected } c:
                 LogDisconnected(logger, c.AtUtc);
@@ -161,6 +172,9 @@ internal sealed partial class ProcessingService(
 
     [LoggerMessage(Level = LogLevel.Information, Message = "{Source} ({ChatId}): message {MessageId}, {Length} chars, latency {LatencySeconds:0.0} s, edit={IsEdit}")]
     private static partial void LogMessage(ILogger logger, string source, long chatId, int messageId, int length, double latencySeconds, bool isEdit);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "{Source} ({ChatId}): message {MessageId} matched {Patterns}, latency {LatencySeconds:0.0} s")]
+    private static partial void LogMatch(ILogger logger, string source, long chatId, int messageId, string patterns, double latencySeconds);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Telegram disconnected at {AtUtc:O}.")]
     private static partial void LogDisconnected(ILogger logger, DateTime atUtc);

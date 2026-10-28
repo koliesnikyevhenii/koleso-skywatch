@@ -1,0 +1,16 @@
+[
+  { "note": "Written for tests, not copied from any channel. Mentions only (C1).", "text": "Повітряна тривога. Краснопавлівка — будьте в укритті.", "patterns": [ "Settlement" ] },
+  { "text": "Внимание, Краснопавловка, оставайтесь в укрытии до отбоя.", "patterns": [ "Settlement" ] },
+  { "text": "Мешканцям Краснопавлівки: тривогу ще не скасовано.", "patterns": [ "Settlement" ] },
+  { "text": "#Краснопавлівка #тривога", "patterns": [ "Settlement" ] },
+  { "text": "Укриття у Краснопавлівці відкрите,\n\nсирену чути на КП.", "patterns": [ "Settlement", "Abbreviation" ] },
+  { "text": "Красно​павлівка, увага!", "patterns": [ "Settlement" ] },
+  { "text": "Біля Краснопавлівського водосховища чути гул.", "patterns": [ "Adjective" ] },
+  { "text": "Тривога для громади. На КП — увага!", "patterns": [ "Abbreviation" ] },
+  { "text": "Краснопе, будьте уважні.", "patterns": [ "Colloquial" ] },
+  { "text": "КП \"Харківводоканал\" повідомляє про планове відключення води.", "patterns": [] },
+  { "text": "За даними КП міста, ремонт триватиме до вечора.", "patterns": [] },
+  { "text": "Новини Красноперекопська та області.", "patterns": [] },
+  { "text": "Рибалка: на краснопёрку клює зранку.", "patterns": [] },
+  { "note": "Latin i inside the name is not folded (D10); known miss.", "text": "Краснопавлiвка", "patterns": [] }
+]
