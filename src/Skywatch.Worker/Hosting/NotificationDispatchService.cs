@@ -165,7 +165,7 @@ internal sealed partial class NotificationDispatchService(
         }
         else
         {
-            result = await sender.SendAsync(outgoing, ct);
+            result = await sender.SendAsync(outgoing with { LabelNotificationId = notification.Id }, ct); // AC-F10.1
         }
 
         var wait = Apply(notification, result, now);

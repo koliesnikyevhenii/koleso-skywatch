@@ -1,11 +1,14 @@
 using System.Net;
 using Microsoft.Extensions.Time.Testing;
 using Skywatch.Worker.Options;
+using Skywatch.Worker.Persistence.Entities;
 using Skywatch.Worker.Telegram;
 using Skywatch.Worker.Tests.Fakes;
 using Telegram.Bot.Exceptions;
+using Telegram.Bot.Requests;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
+using Telegram.Bot.Types.ReplyMarkups;
 
 namespace Skywatch.Worker.Tests.Telegram;
 
@@ -157,6 +160,80 @@ public sealed class BotNotificationSenderTests : IDisposable
 
         transient.DeliveryUnknown.ShouldBeFalse();
         transient.Error.ShouldContain("No connection");
+        transient.Error.ShouldNotContain(_fakeToken);
+    }
+
+    private static (string Text, string? Data)[] Buttons(ReplyMarkup? markup) =>
+        [.. markup.ShouldBeOfType<InlineKeyboardMarkup>().InlineKeyboard.ShouldHaveSingleItem().Select(b => (b.Text, b.CallbackData))];
+
+    // AC-F10.1: a notification with a label id carries the three label buttons with lbl:{id}:{u|f|d} data.
+    [Fact]
+    public async Task AC_F10_1_match_notification_carries_the_three_label_buttons()
+    {
+        await SendAsync(Alert() with { LabelNotificationId = 42 });
+
+        Buttons(_bot.Requests.ShouldHaveSingleItem().ReplyMarkup).ShouldBe([("✅ Корисно", "lbl:42:u"), ("❌ Хибне", "lbl:42:f"), ("🔁 Дубль", "lbl:42:d")]);
+    }
+
+    // AC-F10.1: summaries, reports and edit replies have no label id and so no buttons.
+    [Fact]
+    public async Task AC_F10_1_notification_without_a_label_id_has_no_buttons()
+    {
+        await SendAsync(Summary());
+        await _sender.ReplyAsync(555, Alert(), TestContext.Current.CancellationToken);
+
+        _bot.Requests.ShouldAllBe(r => r.ReplyMarkup == null);
+    }
+
+    // AC-F10.2: the buttons of the bot message in the target chat are re-rendered with the chosen one marked.
+    [Fact]
+    public async Task AC_F10_2_label_markup_marks_the_chosen_button_on_the_target_chat_message()
+    {
+        var result = await _sender.SetLabelMarkupAsync(555, 42, NotificationLabel.Duplicate, TestContext.Current.CancellationToken);
+
+        result.ShouldBe(new SendResult.Success(555));
+        var edit = _bot.OtherRequests.ShouldHaveSingleItem().ShouldBeOfType<EditMessageReplyMarkupRequest>();
+        edit.ChatId.Identifier.ShouldBe(_targetChatId);
+        edit.MessageId.ShouldBe(555);
+        Buttons(edit.ReplyMarkup).ShouldBe([("✅ Корисно", "lbl:42:u"), ("❌ Хибне", "lbl:42:f"), ("✔ 🔁 Дубль", "lbl:42:d")]);
+    }
+
+    // AC-F10.2: pressing the chosen label again leaves the markup as it is; Telegram's "not modified" is no failure.
+    [Fact]
+    public async Task AC_F10_2_unchanged_markup_is_success()
+    {
+        _bot.Throw(new ApiRequestException("Bad Request: message is not modified: specified new message content and reply markup are exactly the same", 400));
+
+        (await _sender.SetLabelMarkupAsync(555, 42, NotificationLabel.Useful, TestContext.Current.CancellationToken)).ShouldBe(new SendResult.Success(555));
+    }
+
+    [Fact]
+    public async Task AC_F10_2_other_markup_error_is_fatal()
+    {
+        _bot.Throw(new ApiRequestException("Bad Request: message to edit not found", 400));
+
+        (await _sender.SetLabelMarkupAsync(555, 42, NotificationLabel.Useful, TestContext.Current.CancellationToken)).ShouldBeOfType<SendResult.Fatal>();
+    }
+
+    // AC-F10.2/F10.4: the press is answered with the given text.
+    [Fact]
+    public async Task AC_F10_4_callback_is_answered_with_the_text()
+    {
+        (await _sender.AnswerCallbackAsync("cb-1", "Немає прав", TestContext.Current.CancellationToken)).ShouldBeOfType<SendResult.Success>();
+
+        var answer = _bot.OtherRequests.ShouldHaveSingleItem().ShouldBeOfType<AnswerCallbackQueryRequest>();
+        answer.CallbackQueryId.ShouldBe("cb-1");
+        answer.Text.ShouldBe("Немає прав");
+    }
+
+    // C5: an answer that fails on the network does not leak the token.
+    [Fact]
+    public async Task AC_F10_5_failed_answer_is_transient_and_the_token_is_redacted()
+    {
+        _bot.Throw(new RequestException("Exception during making request", new HttpRequestException($"No connection to https://api.telegram.org/bot{_fakeToken}/answerCallbackQuery")));
+
+        var transient = (await _sender.AnswerCallbackAsync("cb-1", "Збережено", TestContext.Current.CancellationToken)).ShouldBeOfType<SendResult.Transient>();
+
         transient.Error.ShouldNotContain(_fakeToken);
     }
 }

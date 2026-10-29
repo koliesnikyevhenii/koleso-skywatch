@@ -18,6 +18,9 @@ internal sealed class NotificationOptions
     /// <summary>C2: the private test group, the only chat the bot ever sends to. Identifying: never committed.</summary>
     public long TargetChatId { get; set; }
 
+    /// <summary>AC-F10.2/F10.4: the Telegram user ids allowed to label. Identifying: never committed.</summary>
+    public long[] LabelerUserIds { get; set; } = [];
+
     /// <summary>AC-F7.2: a message older than this is never sent.</summary>
     public int MaxMessageAgeSeconds { get; set; } = 120;
 

@@ -126,6 +126,7 @@ public sealed class NotificationDispatchServiceTests : IDisposable
         row.Attempts.ShouldBe(1);
         var sent = _sender.Sends.ShouldHaveSingleItem();
         sent.Notification.Priority.ShouldBe(SendPriority.Alert);
+        sent.Notification.LabelNotificationId.ShouldBe(id); // AC-F10.1
         sent.Notification.Text.ShouldBe(NotificationFormatter.Format(
             new NotificationContent(["Settlement"], "Шахед на Краснопавлівку", _sourceName, Now.AddSeconds(-4), null, "https://t.me/test_channel/1"),
             Now,

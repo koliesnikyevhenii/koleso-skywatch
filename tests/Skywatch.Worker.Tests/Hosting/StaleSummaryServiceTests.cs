@@ -90,6 +90,7 @@ public sealed class StaleSummaryServiceTests : IDisposable
         await Service().RunOnceAsync(Ct);
 
         var sent = _sender.Sends.ShouldHaveSingleItem();
+        sent.Notification.LabelNotificationId.ShouldBeNull(); // AC-F10.1: summaries carry no buttons
         sent.Notification.Text.ShouldBe("⚠️ Пропущено 3 застарілих збігів (публікації 13:41–13:52)");
         sent.Notification.Priority.ShouldBe(SendPriority.Background);
         foreach (var id in ids)

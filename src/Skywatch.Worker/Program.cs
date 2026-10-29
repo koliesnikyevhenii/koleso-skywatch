@@ -123,6 +123,8 @@ public partial class Program
             {
                 builder.Services.AddHostedService<NotificationDispatchService>();
                 builder.Services.AddHostedService<StaleSummaryService>();
+                builder.Services.AddSingleton<LabelService>();
+                builder.Services.AddHostedService<BotCallbackListener>();
             }
 
             builder.Services.AddHostedService<RetentionService>();

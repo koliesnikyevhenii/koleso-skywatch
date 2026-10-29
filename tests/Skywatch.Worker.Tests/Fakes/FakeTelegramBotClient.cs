@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Threading.Channels;
 using Telegram.Bot;
 using Telegram.Bot.Args;
 using Telegram.Bot.Exceptions;
@@ -9,15 +10,28 @@ using Telegram.Bot.Types;
 namespace Skywatch.Worker.Tests.Fakes;
 
 /// <summary>
-/// Hand-written <see cref="ITelegramBotClient"/> for <c>BotNotificationSender</c>: records every
-/// <see cref="SendMessageRequest"/> and answers with the next queued response, or a message with the next id.
+/// Hand-written <see cref="ITelegramBotClient"/> for <c>BotNotificationSender</c> and <c>BotCallbackListener</c>:
+/// records every <see cref="SendMessageRequest"/> (and the other requests in <see cref="OtherRequests"/>) and answers
+/// with the next queued response, or a message with the next id. <c>getUpdates</c> returns the next batch from
+/// <see cref="EmitUpdates"/>, or waits like a long poll.
 /// </summary>
 internal sealed class FakeTelegramBotClient : ITelegramBotClient
 {
     private readonly ConcurrentQueue<Func<Task>> _responses = new();
     private int _nextMessageId = 100;
 
+    private readonly Channel<Func<Update[]>> _updates = Channel.CreateUnbounded<Func<Update[]>>();
+
     public ConcurrentQueue<SendMessageRequest> Requests { get; } = new();
+
+    public ConcurrentQueue<object> OtherRequests { get; } = new();
+
+    public ConcurrentQueue<GetUpdatesRequest> Polls { get; } = new();
+
+    public void EmitUpdates(params Update[] updates) => _updates.Writer.TryWrite(() => updates);
+
+    /// <summary>The next <c>getUpdates</c> throws <paramref name="exception"/>.</summary>
+    public void FailPoll(Exception exception) => _updates.Writer.TryWrite(() => throw exception);
 
     public bool LocalBotServer => false;
 
@@ -44,7 +58,29 @@ internal sealed class FakeTelegramBotClient : ITelegramBotClient
 
     public async Task<TResponse> SendRequest<TResponse>(IRequest<TResponse> request, CancellationToken cancellationToken = default)
     {
-        var send = request as SendMessageRequest ?? throw new NotSupportedException(request.GetType().Name);
+        if (request is GetUpdatesRequest poll)
+        {
+            Polls.Enqueue(poll);
+            var next = await _updates.Reader.ReadAsync(cancellationToken);
+            return (TResponse)(object)next();
+        }
+
+        if (request is not SendMessageRequest send)
+        {
+            OtherRequests.Enqueue(request);
+            if (_responses.TryDequeue(out var queued))
+            {
+                await queued();
+            }
+
+            return request switch
+            {
+                AnswerCallbackQueryRequest => (TResponse)(object)true,
+                EditMessageReplyMarkupRequest edit => (TResponse)(object)new Message { Id = edit.MessageId },
+                _ => throw new NotSupportedException(request.GetType().Name),
+            };
+        }
+
         Requests.Enqueue(send);
         if (_responses.TryDequeue(out var response))
         {

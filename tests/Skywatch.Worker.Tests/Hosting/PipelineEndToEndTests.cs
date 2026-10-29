@@ -95,6 +95,7 @@ public sealed class PipelineEndToEndTests : IDisposable
         await Eventually.ShouldHappen(() => _sender.Sends.Count == 1, "edit notification sent");
         _sender.Texts[0].ShouldContain("тест оновлений");
         _sender.Texts[0].ShouldContain("✏️ оновлено");
+        _sender.Sends.Single().Notification.LabelNotificationId.ShouldNotBeNull(); // AC-F10.1
         await host.StopAsync(TestContext.Current.CancellationToken);
     }
 }

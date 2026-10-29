@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Skywatch.Worker.Telegram;
+using Telegram.Bot;
 
 namespace Skywatch.Worker.Tests.Fakes;
 
@@ -18,15 +19,16 @@ internal static class TestHost
     public const string FakePhone = "+380001112233";
 
     /// <summary>
-    /// The update source is always a fake (by default one that never emits), so a run-mode host in a test never
-    /// connects to Telegram.
+    /// The update source and the bot client are always fakes (by default ones that never emit), so a run-mode host
+    /// in a test never connects to Telegram.
     /// </summary>
     public static Action<HostApplicationBuilder> Configure(
         IDictionary<string, string?> settings,
         CapturingLoggerProvider? logs = null,
         ITelegramUpdateSource? source = null,
         TimeProvider? time = null,
-        INotificationSender? sender = null) =>
+        INotificationSender? sender = null,
+        ITelegramBotClient? bot = null) =>
         builder =>
         {
             builder.Configuration.Sources.Clear();
@@ -37,6 +39,7 @@ internal static class TestHost
             }
 
             builder.Services.AddSingleton(source ?? new FakeUpdateSource());
+            builder.Services.AddSingleton(bot ?? new FakeTelegramBotClient());
             if (time is not null)
             {
                 builder.Services.AddSingleton(time);
@@ -54,8 +57,9 @@ internal static class TestHost
         CapturingLoggerProvider? logs = null,
         ITelegramUpdateSource? source = null,
         TimeProvider? time = null,
-        INotificationSender? sender = null) =>
-        Program.BuildHost(args, Configure(settings, logs, source, time, sender));
+        INotificationSender? sender = null,
+        ITelegramBotClient? bot = null) =>
+        Program.BuildHost(args, Configure(settings, logs, source, time, sender, bot));
 
     /// <summary>Valid run-mode settings: Telegram settings plus the given sources as <c>Monitoring:Sources</c>.</summary>
     public static Dictionary<string, string?> RunModeSettings(string sessionPath, params (long ChatId, string Name)[] sources)

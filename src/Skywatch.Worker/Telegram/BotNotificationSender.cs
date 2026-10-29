@@ -1,20 +1,25 @@
 using Microsoft.Extensions.Options;
 using Skywatch.Worker.Options;
+using Skywatch.Worker.Persistence.Entities;
+using Skywatch.Worker.Pipeline;
 using Telegram.Bot;
 using Telegram.Bot.Exceptions;
 using Telegram.Bot.Types;
+using Telegram.Bot.Types.ReplyMarkups;
 
 namespace Skywatch.Worker.Telegram;
 
 /// <summary>
 /// Telegram.Bot implementation of <see cref="INotificationSender"/>: plain text, no parse mode, always to
-/// <c>Notifications:TargetChatId</c> (C2). All sends pass one <see cref="SendGate"/>.
+/// <c>Notifications:TargetChatId</c> (C2). All sends and button edits pass one <see cref="SendGate"/>; callback
+/// answers do not, because Telegram expects them within seconds.
 /// </summary>
 internal sealed class BotNotificationSender(ITelegramBotClient bot, IOptions<NotificationOptions> options, TimeProvider time)
     : INotificationSender, IDisposable
 {
     private const int _tooManyRequests = 429;
     private const int _firstServerError = 500;
+    private const string _notModified = "message is not modified";
 
     private readonly SendGate _gate = new(time);
 
@@ -24,15 +29,56 @@ internal sealed class BotNotificationSender(ITelegramBotClient bot, IOptions<Not
     public Task<SendResult> ReplyAsync(long replyToBotMessageId, OutgoingNotification notification, CancellationToken ct) =>
         SendCoreAsync(notification, new ReplyParameters { MessageId = checked((int)replyToBotMessageId) }, ct);
 
+    /// <summary>Succeeds with bot message id 0: an answer creates no message.</summary>
+    public Task<SendResult> AnswerCallbackAsync(string callbackQueryId, string text, CancellationToken ct) =>
+        CallAsync(
+            async () =>
+            {
+                await bot.AnswerCallbackQuery(callbackQueryId, text, cancellationToken: ct);
+                return new SendResult.Success(0);
+            },
+            ct);
+
+    /// <summary>Pressing the already chosen label again leaves the markup unchanged, which is not a failure.</summary>
+    public async Task<SendResult> SetLabelMarkupAsync(int botMessageId, long notificationId, NotificationLabel label, CancellationToken ct)
+    {
+        using var lease = await _gate.EnterAsync(SendPriority.Background, ct);
+        var result = await CallAsync(
+            async () =>
+            {
+                var message = await bot.EditMessageReplyMarkup(options.Value.TargetChatId, botMessageId, LabelKeyboard(notificationId, label), cancellationToken: ct);
+                return new SendResult.Success(message.Id);
+            },
+            ct);
+        return result is SendResult.Fatal fatal && fatal.Error.Contains(_notModified, StringComparison.OrdinalIgnoreCase)
+            ? new SendResult.Success(botMessageId)
+            : result;
+    }
+
     public void Dispose() => _gate.Dispose();
+
+    /// <summary>AC-F10.1: one row of label buttons; AC-F10.2: the chosen one is marked.</summary>
+    internal static InlineKeyboardMarkup LabelKeyboard(long notificationId, NotificationLabel? chosen) =>
+        new(LabelButtons.All.Select(l => InlineKeyboardButton.WithCallbackData(LabelButtons.Text(l, chosen), LabelButtons.Data(notificationId, l))).ToArray());
 
     private async Task<SendResult> SendCoreAsync(OutgoingNotification notification, ReplyParameters? replyTo, CancellationToken ct)
     {
         using var lease = await _gate.EnterAsync(notification.Priority, ct);
+        var keyboard = notification.LabelNotificationId is { } id ? LabelKeyboard(id, chosen: null) : null;
+        return await CallAsync(
+            async () =>
+            {
+                var message = await bot.SendMessage(options.Value.TargetChatId, notification.Text, replyParameters: replyTo, replyMarkup: keyboard, cancellationToken: ct);
+                return new SendResult.Success(message.Id);
+            },
+            ct);
+    }
+
+    private async Task<SendResult> CallAsync(Func<Task<SendResult>> call, CancellationToken ct)
+    {
         try
         {
-            var message = await bot.SendMessage(options.Value.TargetChatId, notification.Text, replyParameters: replyTo, cancellationToken: ct);
-            return new SendResult.Success(message.Id);
+            return await call();
         }
         catch (ApiRequestException ex) when (ex.ErrorCode == _tooManyRequests)
         {
@@ -58,9 +104,11 @@ internal sealed class BotNotificationSender(ITelegramBotClient bot, IOptions<Not
 
     private static string Describe(Exception ex) => ex.InnerException is { } inner ? $"{ex.Message}: {inner.Message}" : ex.Message;
 
+    private string Redact(string error) => Redact(error, options.Value.BotToken);
+
     /// <summary>C5: the token is part of every request URL, so it must never reach a stored error or a log.</summary>
-    private string Redact(string error) =>
-        string.IsNullOrEmpty(options.Value.BotToken) ? error : error.Replace(options.Value.BotToken, "***", StringComparison.Ordinal);
+    internal static string Redact(string error, string token) =>
+        string.IsNullOrEmpty(token) ? error : error.Replace(token, "***", StringComparison.Ordinal);
 }
 
 /// <summary>
