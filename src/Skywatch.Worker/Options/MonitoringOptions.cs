@@ -12,6 +12,34 @@ internal sealed class MonitoringOptions
 
     /// <summary>Spec F5: named patterns, evaluated in this order. Defaults live in appsettings.json.</summary>
     public List<PatternOptions> Patterns { get; set; } = [];
+
+    /// <summary>AC-F6.4 (a): window for forward duplicates (same origin key).</summary>
+    public int DuplicateWindowMinutes { get; set; } = 60;
+
+    /// <summary>AC-F6.4 (b): window for identical-text duplicates.</summary>
+    public int ContentDuplicateWindowMinutes { get; set; } = 10;
+
+    /// <summary>AC-F6.4 (b): when <see langword="true"/>, a repeat of the same text in the same source is always sent.</summary>
+    public bool ContentDuplicateAcrossSourcesOnly { get; set; } = true;
+
+    /// <summary>Spec F9.</summary>
+    public EditHandling EditHandling { get; set; } = EditHandling.NotifyOnNewMatch;
+
+    /// <summary>AC-F9.5: quiet time after the last edit before the reply is created.</summary>
+    public int EditDebounceSeconds { get; set; } = 15;
+}
+
+/// <summary>Spec F9 (decision D3).</summary>
+internal enum EditHandling
+{
+    /// <summary>AC-F9.1: edits change nothing.</summary>
+    Ignore,
+
+    /// <summary>AC-F9.3/F9.4: a message that newly matches after an edit is notified once.</summary>
+    NotifyOnNewMatch,
+
+    /// <summary>AC-F9.5: as <see cref="NotifyOnNewMatch"/>, plus a reply when a sent message changes.</summary>
+    ReplyOnChange,
 }
 
 internal sealed class PatternOptions
@@ -59,6 +87,21 @@ internal sealed class MonitoringOptionsValidator : IValidateOptions<MonitoringOp
         foreach (var duplicate in options.Sources.GroupBy(s => s.ChatId).Where(g => g.Count() > 1))
         {
             failures.Add($"Monitoring:Sources: ChatId {duplicate.Key} is listed more than once.");
+        }
+
+        if (options.DuplicateWindowMinutes <= 0)
+        {
+            failures.Add("Monitoring:DuplicateWindowMinutes must be greater than 0.");
+        }
+
+        if (options.ContentDuplicateWindowMinutes <= 0)
+        {
+            failures.Add("Monitoring:ContentDuplicateWindowMinutes must be greater than 0.");
+        }
+
+        if (options.EditDebounceSeconds <= 0)
+        {
+            failures.Add("Monitoring:EditDebounceSeconds must be greater than 0.");
         }
 
         ValidatePatterns(options.Patterns, failures);

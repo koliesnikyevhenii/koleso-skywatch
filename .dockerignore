@@ -1,0 +1,25 @@
+# Only src/ and the root build files are needed (see Dockerfile). Never send runtime data or secrets to the
+# build context (spec C4).
+**/bin/
+**/obj/
+**/data/
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.dat
+**/*.state
+**/.env
+**/*.user
+.git/
+.github/
+.vs/
+.vscode/
+.idea/
+.claude/
+.agents/
+.config/
+TestResults/
+tests/
+docs/
+deploy/
+build/

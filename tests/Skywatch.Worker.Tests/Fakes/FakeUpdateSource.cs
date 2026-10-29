@@ -13,6 +13,7 @@ internal sealed class FakeUpdateSource : ITelegramUpdateSource
 {
     private readonly Channel<SourceEvent> _events = Channel.CreateUnbounded<SourceEvent>();
     private int _yielded;
+    private int _handled;
 
     public IReadOnlyList<ResolvedSource> Sources { get; init; } = [];
 
@@ -23,6 +24,11 @@ internal sealed class FakeUpdateSource : ITelegramUpdateSource
 
     /// <summary>For each save call, how many events had been yielded at that moment.</summary>
     public ConcurrentQueue<int> SaveCalls { get; } = new();
+
+    /// <summary>
+    /// Events the consumer has finished with, including its save check: counted when it asks for the next event.
+    /// </summary>
+    public int Handled => Volatile.Read(ref _handled);
 
     public void Emit(SourceEvent sourceEvent) => _events.Writer.TryWrite(sourceEvent);
 
@@ -50,6 +56,7 @@ internal sealed class FakeUpdateSource : ITelegramUpdateSource
 
             Interlocked.Increment(ref _yielded);
             yield return next;
+            Interlocked.Increment(ref _handled);
         }
 
         // Same contract as the real source: after cancellation, queued events are still delivered.

@@ -1,0 +1,3 @@
+# Scaffolded by `dotnet ef migrations add`: exempt from style and code-quality analyzers.
+[*.cs]
+generated_code = true

@@ -3,6 +3,8 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using Skywatch.Core.Deduplication;
+using Skywatch.Worker.Persistence;
+using Skywatch.Worker.Persistence.Entities;
 using Skywatch.Worker.Telegram;
 using Skywatch.Worker.Tests.Fakes;
 
@@ -122,11 +124,12 @@ public sealed class ProcessingServiceTests : IDisposable
         var source = new FakeUpdateSource { Sources = [Resolved(_sourceA, _sourceAName)] };
         using var host = await StartAsync(source);
 
+        // Advance the clock only once the previous event, including its save check, is fully handled.
         source.Emit(Message(1, "Перше", TimeSpan.FromSeconds(1)));
-        await MessageLogged(1);
+        await Eventually.ShouldHappen(() => source.Handled == 1, "message 1 handled");
         _time.Advance(TimeSpan.FromSeconds(59));
         source.Emit(Message(2, "Друге", TimeSpan.FromSeconds(1)));
-        await MessageLogged(2);
+        await Eventually.ShouldHappen(() => source.Handled == 2, "message 2 handled");
         source.SaveCalls.ShouldBeEmpty();
 
         _time.Advance(TimeSpan.FromSeconds(1));
@@ -265,6 +268,145 @@ public sealed class ProcessingServiceTests : IDisposable
         MatchLines(10).Single().ShouldNotContain("Slow");
         await host.StopAsync(TestContext.Current.CancellationToken);
     }
+
+    // AC-F2.2: resolved sources are upserted into Sources with type, username and the noforwards flag.
+    [Fact]
+    public async Task AC_F2_2_resolved_sources_are_upserted_with_type_username_and_noforwards()
+    {
+        var settings = Settings();
+        var source = new FakeUpdateSource
+        {
+            Sources =
+            [
+                new ResolvedSource(_sourceA, _sourceAName, SourceType.Channel, "test_channel_a", NoForwards: true, Resolved: true),
+                new ResolvedSource(_sourceB, _sourceBName, SourceType.Supergroup, null, NoForwards: false, Resolved: true),
+            ],
+        };
+        using var host = await StartWithAsync(source, settings);
+        await StartedRecorded(settings);
+        await host.StopAsync(TestContext.Current.CancellationToken);
+
+        var rows = Query(settings, db => db.Sources.OrderBy(s => s.TelegramChatId).ToList());
+        rows.Count.ShouldBe(2);
+        var a = rows.Single(s => s.TelegramChatId == _sourceA);
+        (a.Name, a.Type, a.Username, a.NoForwards, a.IsEnabled).ShouldBe((_sourceAName, SourceType.Channel, "test_channel_a", true, true));
+        a.CreatedAtUtc.ShouldBe(_time.GetUtcNow().UtcDateTime);
+        var b = rows.Single(s => s.TelegramChatId == _sourceB);
+        (b.Name, b.Type, b.Username, b.NoForwards, b.IsEnabled).ShouldBe((_sourceBName, SourceType.Supergroup, (string?)null, false, true));
+    }
+
+    // AC-F2.2: on the next start an existing source is updated in place (same row, original CreatedAtUtc).
+    [Fact]
+    public async Task AC_F2_2_existing_source_is_updated_in_place_on_the_next_start()
+    {
+        var settings = Settings();
+        await RunOnceAsync(settings, new ResolvedSource(_sourceA, "Old name", SourceType.Channel, null, NoForwards: false, Resolved: true));
+        var created = Query(settings, db => db.Sources.Single());
+        _time.Advance(TimeSpan.FromDays(1));
+
+        await RunOnceAsync(settings, new ResolvedSource(_sourceA, _sourceAName, SourceType.Supergroup, "renamed_a", NoForwards: true, Resolved: true));
+
+        var updated = Query(settings, db => db.Sources.Single());
+        updated.Id.ShouldBe(created.Id);
+        updated.CreatedAtUtc.ShouldBe(created.CreatedAtUtc);
+        (updated.Name, updated.Type, updated.Username, updated.NoForwards, updated.IsEnabled).ShouldBe((_sourceAName, SourceType.Supergroup, "renamed_a", true, true));
+    }
+
+    // AC-F2.2: configuration is the source of truth for Enabled. A source no longer enabled in config is marked
+    // disabled, and enabled again once it is back.
+    [Fact]
+    public async Task AC_F2_2_configuration_is_the_source_of_truth_for_enabled()
+    {
+        var settings = Settings();
+        await RunOnceAsync(settings, Resolved(_sourceA, _sourceAName), Resolved(_sourceB, _sourceBName));
+
+        await RunOnceAsync(settings, Resolved(_sourceA, _sourceAName));
+        Query(settings, db => db.Sources.Single(s => s.TelegramChatId == _sourceB).IsEnabled).ShouldBeFalse();
+        Query(settings, db => db.Sources.Single(s => s.TelegramChatId == _sourceA).IsEnabled).ShouldBeTrue();
+
+        await RunOnceAsync(settings, Resolved(_sourceA, _sourceAName), Resolved(_sourceB, _sourceBName));
+        Query(settings, db => db.Sources.Count(s => s.IsEnabled)).ShouldBe(2);
+    }
+
+    // AC-F2.2 / F2.3: only resolved sources are upserted; an unresolved one is skipped.
+    [Fact]
+    public async Task AC_F2_2_unresolved_source_is_not_inserted()
+    {
+        var settings = Settings();
+
+        await RunOnceAsync(settings, Resolved(_sourceA, _sourceAName), new ResolvedSource(_sourceB, _sourceBName, SourceType.Channel, null, false, Resolved: false));
+
+        Query(settings, db => db.Sources.Select(s => s.TelegramChatId).ToList()).ShouldBe([_sourceA]);
+    }
+
+    // AC-F3.7: disconnects and reconnects are recorded as ServiceEvents at the time they happened.
+    [Fact]
+    public async Task AC_F3_7_disconnect_and_reconnect_are_recorded_as_service_events()
+    {
+        var settings = Settings();
+        var source = new FakeUpdateSource { Sources = [Resolved(_sourceA, _sourceAName)] };
+        using var host = await StartWithAsync(source, settings);
+        var disconnectedAt = _time.GetUtcNow().UtcDateTime.AddSeconds(-30);
+        var reconnectedAt = _time.GetUtcNow().UtcDateTime;
+
+        source.Emit(new ConnectionStateChanged(ConnectionState.Disconnected, disconnectedAt));
+        source.Emit(new ConnectionStateChanged(ConnectionState.Reconnected, reconnectedAt));
+
+        await Eventually.ShouldHappen(() => Events(settings).Any(e => e.Kind == ServiceEventKind.Reconnected), "reconnect recorded");
+        var events = Events(settings).Where(e => e.Kind is ServiceEventKind.Disconnected or ServiceEventKind.Reconnected).ToList();
+        events.Select(e => (e.Kind, e.OccurredAtUtc)).ShouldBe([(ServiceEventKind.Disconnected, disconnectedAt), (ServiceEventKind.Reconnected, reconnectedAt)]);
+        await host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    // Plan P3a: ServiceEvents for Started and Stopped; Stopped after the channel is drained on shutdown.
+    [Fact]
+    public async Task P3a_started_and_stopped_are_recorded_as_service_events()
+    {
+        var settings = Settings();
+        var source = new FakeUpdateSource { Sources = [Resolved(_sourceA, _sourceAName)] };
+        using var host = await StartWithAsync(source, settings);
+        await StartedRecorded(settings);
+        Events(settings).ShouldNotContain(e => e.Kind == ServiceEventKind.Stopped);
+
+        _time.Advance(TimeSpan.FromMinutes(5));
+        await host.StopAsync(TestContext.Current.CancellationToken);
+
+        var events = Events(settings);
+        events.Select(e => e.Kind).ShouldBe([ServiceEventKind.Started, ServiceEventKind.Stopped]);
+        events[1].OccurredAtUtc.ShouldBe(_time.GetUtcNow().UtcDateTime);
+    }
+
+    private Dictionary<string, string?> Settings() =>
+        TestHost.RunModeSettings(_session.Path, (_sourceA, _sourceAName), (_sourceB, _sourceBName));
+
+    private async Task<IHost> StartWithAsync(FakeUpdateSource source, Dictionary<string, string?> settings)
+    {
+        var host = TestHost.Build([], settings, _logs, source, _time);
+        await host.StartAsync(TestContext.Current.CancellationToken);
+        return host;
+    }
+
+    /// <summary>One full start → Started recorded → stop cycle against the same database.</summary>
+    private async Task RunOnceAsync(Dictionary<string, string?> settings, params ResolvedSource[] sources)
+    {
+        // Counted before the start: ExecuteAsync runs in the background and may record Started before StartAsync returns.
+        var before = File.Exists(settings["Storage:DatabasePath"]) ? Events(settings).Count(e => e.Kind == ServiceEventKind.Started) : 0;
+        using var host = await StartWithAsync(new FakeUpdateSource { Sources = sources }, settings);
+        await Eventually.ShouldHappen(() => Events(settings).Count(e => e.Kind == ServiceEventKind.Started) > before, "Started recorded");
+        await host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    private static Task StartedRecorded(Dictionary<string, string?> settings) =>
+        Eventually.ShouldHappen(() => Events(settings).Any(e => e.Kind == ServiceEventKind.Started), "Started recorded");
+
+    private static T Query<T>(Dictionary<string, string?> settings, Func<SkywatchDbContext, T> query)
+    {
+        using var db = SqliteTestDb.OpenFile(settings["Storage:DatabasePath"]!);
+        return query(db);
+    }
+
+    private static List<ServiceEvent> Events(Dictionary<string, string?> settings) =>
+        Query(settings, db => db.ServiceEvents.OrderBy(e => e.Id).ToList());
 
     private IEnumerable<string> MatchLines(int messageId) =>
         _logs.Lines.Where(l => l.Contains($"message {messageId} matched"));

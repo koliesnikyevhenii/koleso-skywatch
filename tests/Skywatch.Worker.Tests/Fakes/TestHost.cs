@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Skywatch.Worker.Telegram;
+using Telegram.Bot;
 
 namespace Skywatch.Worker.Tests.Fakes;
 
@@ -18,14 +19,16 @@ internal static class TestHost
     public const string FakePhone = "+380001112233";
 
     /// <summary>
-    /// The update source is always a fake (by default one that never emits), so a run-mode host in a test never
-    /// connects to Telegram.
+    /// The update source and the bot client are always fakes (by default ones that never emit), so a run-mode host
+    /// in a test never connects to Telegram.
     /// </summary>
     public static Action<HostApplicationBuilder> Configure(
         IDictionary<string, string?> settings,
         CapturingLoggerProvider? logs = null,
         ITelegramUpdateSource? source = null,
-        TimeProvider? time = null) =>
+        TimeProvider? time = null,
+        INotificationSender? sender = null,
+        ITelegramBotClient? bot = null) =>
         builder =>
         {
             builder.Configuration.Sources.Clear();
@@ -36,9 +39,15 @@ internal static class TestHost
             }
 
             builder.Services.AddSingleton(source ?? new FakeUpdateSource());
+            builder.Services.AddSingleton(bot ?? new FakeTelegramBotClient());
             if (time is not null)
             {
                 builder.Services.AddSingleton(time);
+            }
+
+            if (sender is not null)
+            {
+                builder.Services.AddSingleton(sender);
             }
         };
 
@@ -47,8 +56,10 @@ internal static class TestHost
         IDictionary<string, string?> settings,
         CapturingLoggerProvider? logs = null,
         ITelegramUpdateSource? source = null,
-        TimeProvider? time = null) =>
-        Program.BuildHost(args, Configure(settings, logs, source, time));
+        TimeProvider? time = null,
+        INotificationSender? sender = null,
+        ITelegramBotClient? bot = null) =>
+        Program.BuildHost(args, Configure(settings, logs, source, time, sender, bot));
 
     /// <summary>Valid run-mode settings: Telegram settings plus the given sources as <c>Monitoring:Sources</c>.</summary>
     public static Dictionary<string, string?> RunModeSettings(string sessionPath, params (long ChatId, string Name)[] sources)
@@ -68,7 +79,7 @@ internal static class TestHost
 
     /// <summary>
     /// Complete, valid Telegram settings pointing at <paramref name="sessionPath"/>, plus <see cref="ProbePattern"/>
-    /// (matches the word "тест").
+    /// (matches the word "тест") and a fresh database file.
     /// </summary>
     public static Dictionary<string, string?> TelegramSettings(string sessionPath) => new()
     {
@@ -79,7 +90,32 @@ internal static class TestHost
         ["Telegram:SessionKey"] = FakeSessionKey,
         ["Monitoring:Patterns:0:Name"] = ProbePattern,
         ["Monitoring:Patterns:0:Regex"] = @"\bтест\b",
+        ["Storage:DatabasePath"] = TempDatabasePath(),
     };
+
+    private static readonly string _databaseDirectory = Path.Combine(Path.GetTempPath(), "skywatch-tests");
+
+    /// <summary>
+    /// A fresh database file path. Pooled SQLite connections keep the file open after the host stops, so files are
+    /// not deleted per test; leftovers from earlier runs are removed instead.
+    /// </summary>
+    public static string TempDatabasePath() => Path.Combine(_databaseDirectory, $"{Guid.NewGuid():N}.db");
+
+    static TestHost()
+    {
+        Directory.CreateDirectory(_databaseDirectory);
+        foreach (var file in Directory.EnumerateFiles(_databaseDirectory).Where(f => File.GetLastWriteTimeUtc(f) < DateTime.UtcNow.AddHours(-1)))
+        {
+            try
+            {
+                File.Delete(file);
+            }
+            catch (IOException)
+            {
+                // Still open by a parallel test run; a later run removes it.
+            }
+        }
+    }
 
     /// <summary>Replaces every configured pattern with the given ones.</summary>
     public static void SetPatterns(Dictionary<string, string?> settings, params (string Name, string Regex, bool Enabled)[] patterns)
