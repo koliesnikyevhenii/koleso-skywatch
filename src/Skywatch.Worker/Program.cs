@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Hosting.WindowsServices;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Skywatch.Core.Filtering;
@@ -90,6 +91,12 @@ public partial class Program
 
     internal static IHost BuildHost(string[] args, Action<HostApplicationBuilder>? configure = null)
     {
+        // A Windows Service starts in System32: appsettings.json and the relative data/ paths live next to the exe.
+        if (WindowsServiceHelpers.IsWindowsService())
+        {
+            Directory.SetCurrentDirectory(AppContext.BaseDirectory);
+        }
+
         var builder = Host.CreateApplicationBuilder(args);
         AddUserSecrets(builder);
         configure?.Invoke(builder);
@@ -119,6 +126,12 @@ public partial class Program
 
         if (mode == RunMode.Run)
         {
+            // N4: the stop waits for the channel drain and the Stopped event; Docker's stop_grace_period is longer.
+            builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = ShutdownTimeout);
+
+            // N7: a Windows Service when started by the service control manager; a no-op otherwise.
+            builder.Services.AddWindowsService(o => o.ServiceName = "Skywatch");
+
             monitoring.ValidateOnStart();
             builder.Services.AddSingleton<IValidateOptions<MonitoringOptions>, MonitoringOptionsValidator>();
             builder.Services.AddOptions<StorageOptions>().BindConfiguration(StorageOptions.SectionName).ValidateOnStart();
@@ -195,6 +208,8 @@ public partial class Program
             });
         return host;
     }
+
+    internal static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(30);
 
     /// <summary>Patterns are compiled once (AC-F5.9); a match timeout is logged with the pattern name (AC-F5.10).</summary>
     private static KeywordFilter CreateKeywordFilter(IServiceProvider services)

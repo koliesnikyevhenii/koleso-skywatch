@@ -1,0 +1,27 @@
+# Skywatch on the VPS (plan P7). Run from this folder: docker compose up -d --build
+# Secrets and identifying values come from .env (copy .env.example; never commit .env, spec C4).
+name: skywatch
+
+services:
+  skywatch:
+    build:
+      context: ..
+    image: skywatch:local
+    container_name: skywatch
+    restart: unless-stopped
+    env_file: .env
+    # N4: the host waits up to 30 s for the drain and the Stopped event; Docker must not kill it earlier (default 10 s).
+    stop_grace_period: 40s
+    # `docker compose run --rm skywatch login` prompts for the code and the 2FA password.
+    stdin_open: true
+    tty: true
+    volumes:
+      - skywatch-data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  skywatch-data:
