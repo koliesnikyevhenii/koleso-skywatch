@@ -111,6 +111,9 @@ public partial class Program
             builder.Services.AddSingleton(CreateKeywordFilter);
             builder.Services.AddSingleton<DuplicateDetector>();
             builder.Services.AddSingleton<MessageProcessor>();
+            builder.Services.AddSingleton<EditHandler>();
+            builder.Services.AddSingleton<EditReplyService>();
+            builder.Services.AddHostedService(sp => sp.GetRequiredService<EditReplyService>());
             builder.Services.AddSingleton<ProcessingService>();
             builder.Services.AddHostedService(sp => sp.GetRequiredService<ProcessingService>());
             builder.Services.AddSingleton<DispatchSignal>();

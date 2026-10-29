@@ -15,11 +15,12 @@ namespace Skywatch.Worker.Hosting;
 /// <summary>
 /// The single consumer of the update source: resolve and upsert sources, read events, save the update state, and
 /// record lifecycle and connection changes as service events (AC-F3.7). New messages go to
-/// <see cref="MessageProcessor"/>; edits are logged and ignored until P5.
+/// <see cref="MessageProcessor"/>, edits to <see cref="EditHandler"/> (spec F9).
 /// </summary>
 internal sealed partial class ProcessingService(
     ITelegramUpdateSource source,
     MessageProcessor processor,
+    EditHandler edits,
     IDbContextFactory<SkywatchDbContext> dbFactory,
     IOptions<TelegramOptions> telegram,
     TimeProvider time,
@@ -156,7 +157,11 @@ internal sealed partial class ProcessingService(
                 LogMessage(logger, name, m.ChatId, m.MessageId, m.Text.Length, latency, m.IsEdit);
 
                 // Not cancellable: messages read during shutdown are still processed while the channel drains (N4).
-                if (!m.IsEdit)
+                if (m.IsEdit)
+                {
+                    await edits.HandleAsync(m, CancellationToken.None);
+                }
+                else
                 {
                     await processor.ProcessAsync(m, CancellationToken.None);
                 }

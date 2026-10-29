@@ -151,4 +151,14 @@ public class NotificationFormatterTests
         Should.NotThrow(() => new UTF8Encoding(false, throwOnInvalidBytes: true).GetBytes(formatted));
         formatted.ShouldContain("…\n\n──────────\n");
     }
+
+    // Plan P5 reply variant (AC-F9.5): the edit removed every mention, so there are no pattern names; the tag line
+    // carries only the edit marker.
+    [Fact]
+    public void AC_F9_5_edit_reply_without_matching_patterns_shows_only_the_edit_marker()
+    {
+        var content = new NotificationContent([], "Відбій", "Test channel", _summerUtc, _summerUtc.AddMinutes(1), Link: null);
+
+        Format(content).Split('\n')[1].ShouldBe("✏️ оновлено");
+    }
 }

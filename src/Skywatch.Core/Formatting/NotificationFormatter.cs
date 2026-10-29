@@ -26,8 +26,7 @@ public static class NotificationFormatter
     /// <param name="displayZone">AC-F8.12: the published time is shown in this zone, honouring DST.</param>
     public static string Format(NotificationContent content, DateTime sendAttemptAtUtc, TimeZoneInfo displayZone)
     {
-        var tags = string.Join(", ", content.PatternNames);
-        var header = $"{Disclaimer}\n🏷 {tags}{(content.EditedAtUtc is null ? "" : " · ✏️ оновлено")}\n\n";
+        var header = $"{Disclaimer}\n{TagLine(content)}\n\n";
 
         var published = TimeZoneInfo.ConvertTimeFromUtc(content.PublishedAtUtc, displayZone);
         var footer = new StringBuilder()
@@ -41,6 +40,18 @@ public static class NotificationFormatter
 
         var tail = footer.ToString();
         return header + Truncate(content.Text, MaxLength - header.Length - tail.Length) + tail;
+    }
+
+    /// <summary>
+    /// AC-F8.2. An edit reply (AC-F9.5) whose new text no longer matches has no pattern names: the line then carries
+    /// only the edit marker.
+    /// </summary>
+    private static string TagLine(NotificationContent content)
+    {
+        var edited = content.EditedAtUtc is null ? null : "✏️ оновлено";
+        return content.PatternNames.Count == 0
+            ? edited ?? "🏷"
+            : $"🏷 {string.Join(", ", content.PatternNames)}{(edited is null ? "" : $" · {edited}")}";
     }
 
     /// <summary>AC-F8.5 and AC-F7.3: whole seconds from publication, or from the edit for edit-triggered notifications.</summary>

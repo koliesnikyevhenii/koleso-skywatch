@@ -29,7 +29,8 @@ internal sealed class DispatchSignal
 /// <summary>
 /// Spec F8: the single consumer of the outbox. At startup and on every signal it sends <c>Pending</c> rows one by
 /// one in creation order (AC-F8.1, AC-F8.11). Each attempt re-reads the row on a new context, skips it when it is
-/// no longer <c>Pending</c>, and rechecks staleness before sending (AC-F7.1).
+/// no longer <c>Pending</c>, and rechecks staleness before sending (AC-F7.1), from the edit time for edit-triggered
+/// rows (AC-F7.3). <c>EditReply</c> rows go out as replies to the alert (AC-F9.5).
 /// </summary>
 internal sealed partial class NotificationDispatchService(
     IDbContextFactory<SkywatchDbContext> dbFactory,
@@ -140,9 +141,33 @@ internal sealed partial class NotificationDispatchService(
             message.PublishedAtUtc,
             editedAt,
             SourceLinkBuilder.Build(message.Source.TelegramChatId, message.Source.Username, message.TelegramMessageId));
-        var text = NotificationFormatter.Format(content, now, displayZone);
+        var outgoing = new OutgoingNotification(NotificationFormatter.Format(content, now, displayZone), SendPriority.Alert);
 
-        var result = await sender.SendAsync(new OutgoingNotification(text, SendPriority.Alert), ct);
+        SendResult result;
+        if (notification.Kind == NotificationKind.EditReply)
+        {
+            // AC-F9.5: a reply to the bot message of the alert about this message.
+            var replyTo = await db.Notifications
+                .Where(n => n.MessageId == message.Id && n.Kind != NotificationKind.EditReply && n.Status == NotificationStatus.Sent && n.BotMessageId != null)
+                .OrderBy(n => n.Id)
+                .Select(n => n.BotMessageId)
+                .FirstOrDefaultAsync(ct);
+            if (replyTo is not { } botMessageId)
+            {
+                notification.Status = NotificationStatus.Failed;
+                notification.Error = "The notification to reply to is not sent.";
+                await db.SaveChangesAsync(CancellationToken.None);
+                LogFailed(logger, id, notification.Attempts, notification.Error);
+                return null;
+            }
+
+            result = await sender.ReplyAsync(botMessageId, outgoing, ct);
+        }
+        else
+        {
+            result = await sender.SendAsync(outgoing, ct);
+        }
+
         var wait = Apply(notification, result, now);
 
         // Not cancellable: a message that went out must be recorded as sent, or a restart would send it again.

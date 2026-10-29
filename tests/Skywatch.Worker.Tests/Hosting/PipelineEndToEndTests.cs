@@ -74,4 +74,27 @@ public sealed class PipelineEndToEndTests : IDisposable
         await host.StopAsync(TestContext.Current.CancellationToken);
         _sender.Sends.Count.ShouldBe(2);
     }
+
+    // AC-F3.9 → AC-F9.3 through the host: an edit event goes to EditHandler (default NotifyOnNewMatch); an
+    // unmatched post edited to mention the village is sent with the edit marker.
+    [Fact]
+    public async Task P5_edit_adding_a_mention_is_sent_with_the_edit_marker()
+    {
+        var settings = TestHost.RunModeSettings(_session.Path, (_sourceA, "Test source A"));
+        settings["Notifications:Enabled"] = "true";
+        settings["Notifications:BotToken"] = "123456:fake-bot-token-do-not-log";
+        settings["Notifications:TargetChatId"] = "-1000000000777";
+        var source = new FakeUpdateSource { Sources = [new ResolvedSource(_sourceA, "Test source A", SourceType.Channel, "test_a", NoForwards: false, Resolved: true)] };
+        using var host = TestHost.Build([], settings, source: source, time: _time, sender: _sender);
+        await host.StartAsync(TestContext.Current.CancellationToken);
+
+        var original = Message(_sourceA, 1, "тиша");
+        source.Emit(original);
+        source.Emit(original with { Text = "тест оновлений", IsEdit = true, EditedAtUtc = original.ReceivedAtUtc });
+
+        await Eventually.ShouldHappen(() => _sender.Sends.Count == 1, "edit notification sent");
+        _sender.Texts[0].ShouldContain("тест оновлений");
+        _sender.Texts[0].ShouldContain("✏️ оновлено");
+        await host.StopAsync(TestContext.Current.CancellationToken);
+    }
 }
