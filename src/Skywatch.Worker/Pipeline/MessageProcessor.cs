@@ -6,6 +6,7 @@ using Skywatch.Core.Deduplication;
 using Skywatch.Core.Filtering;
 using Skywatch.Core.Normalization;
 using Skywatch.Core.Time;
+using Skywatch.Worker.Hosting;
 using Skywatch.Worker.Options;
 using Skywatch.Worker.Persistence;
 using Skywatch.Worker.Persistence.Entities;
@@ -37,6 +38,7 @@ internal sealed partial class MessageProcessor(
     IDbContextFactory<SkywatchDbContext> dbFactory,
     KeywordFilter filter,
     DuplicateDetector duplicates,
+    DispatchSignal dispatch,
     IOptions<StorageOptions> storage,
     IOptions<NotificationOptions> notifications,
     TimeProvider time,
@@ -115,6 +117,11 @@ internal sealed partial class MessageProcessor(
             // AC-F6.2: also covers a concurrent insert of the same key between our read and write.
             LogAlreadyProcessed(logger, source.Name, message.ChatId, message.MessageId);
             return ProcessOutcome.AlreadyProcessed;
+        }
+
+        if (outcome == ProcessOutcome.Pending)
+        {
+            dispatch.Notify(); // after the commit, so the dispatcher finds the row
         }
 
         if (result.IsMatch)

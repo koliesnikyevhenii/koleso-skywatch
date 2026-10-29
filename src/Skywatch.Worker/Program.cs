@@ -113,6 +113,15 @@ public partial class Program
             builder.Services.AddSingleton<MessageProcessor>();
             builder.Services.AddSingleton<ProcessingService>();
             builder.Services.AddHostedService(sp => sp.GetRequiredService<ProcessingService>());
+            builder.Services.AddSingleton<DispatchSignal>();
+
+            // With notifications disabled nothing is ever Pending, and the bot client (which needs a token) is never built.
+            if (builder.Configuration.GetValue<bool>($"{NotificationOptions.SectionName}:{nameof(NotificationOptions.Enabled)}"))
+            {
+                builder.Services.AddHostedService<NotificationDispatchService>();
+                builder.Services.AddHostedService<StaleSummaryService>();
+            }
+
             builder.Services.AddHostedService<RetentionService>();
         }
 

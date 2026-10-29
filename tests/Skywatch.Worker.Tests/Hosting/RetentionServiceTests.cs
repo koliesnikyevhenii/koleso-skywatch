@@ -19,7 +19,7 @@ public sealed class RetentionServiceTests : IDisposable
     private static readonly TimeSpan _second = TimeSpan.FromSeconds(1);
 
     private readonly FakeTimeProvider _time = new(new DateTimeOffset(2026, 10, 27, 12, 0, 0, TimeSpan.Zero));
-    private readonly SqliteTestDb _db = new();
+    private readonly SqliteTestDb _db = new(concurrent: true);
     private int _nextMessageId = 1;
 
     public void Dispose() => _db.Dispose();

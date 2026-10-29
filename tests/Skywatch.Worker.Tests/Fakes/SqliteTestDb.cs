@@ -10,13 +10,20 @@ namespace Skywatch.Worker.Tests.Fakes;
 /// </summary>
 internal sealed class SqliteTestDb : IDbContextFactory<SkywatchDbContext>, IDisposable
 {
-    private readonly SqliteConnection _connection = new("Data Source=:memory:");
+    private readonly SqliteConnection _connection;
     private readonly DbContextOptions<SkywatchDbContext> _options;
 
-    public SqliteTestDb()
+    /// <param name="concurrent">
+    /// For a background service running beside the test: every context opens its own connection to a named shared
+    /// in-memory database, because one <see cref="SqliteConnection"/> must not be used from two threads at once.
+    /// </param>
+    public SqliteTestDb(bool concurrent = false)
     {
+        var connectionString = concurrent ? $"Data Source=skywatch-test-{Guid.NewGuid():N};Mode=Memory;Cache=Shared" : "Data Source=:memory:";
+        _connection = new SqliteConnection(connectionString);
         _connection.Open();
-        _options = new DbContextOptionsBuilder<SkywatchDbContext>().UseSqlite(_connection).Options;
+        var builder = new DbContextOptionsBuilder<SkywatchDbContext>();
+        _options = (concurrent ? builder.UseSqlite(connectionString) : builder.UseSqlite(_connection)).Options;
         using var db = CreateDbContext();
         db.Database.Migrate();
     }

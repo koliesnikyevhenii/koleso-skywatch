@@ -3,10 +3,13 @@ namespace Skywatch.Worker.Tests.Fakes;
 /// <summary>Waits for a background service to reach an observable state. Polls wall-clock time; the service's own timing uses FakeTimeProvider.</summary>
 internal static class Eventually
 {
-    public static async Task ShouldHappen(Func<bool> condition, string what)
+    public static Task ShouldHappen(Func<bool> condition, string what) => ShouldHappenAsync(() => Task.FromResult(condition()), what);
+
+    /// <summary>For conditions that query the database.</summary>
+    public static async Task ShouldHappenAsync(Func<Task<bool>> condition, string what)
     {
         var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (!condition())
+        while (!await condition())
         {
             if (DateTime.UtcNow > deadline)
             {

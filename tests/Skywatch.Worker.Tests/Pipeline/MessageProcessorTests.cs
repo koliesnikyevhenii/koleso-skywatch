@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using Skywatch.Core.Deduplication;
 using Skywatch.Core.Filtering;
+using Skywatch.Worker.Hosting;
 using Skywatch.Worker.Options;
 using Skywatch.Worker.Persistence;
 using Skywatch.Worker.Persistence.Entities;
@@ -30,6 +31,7 @@ public sealed class MessageProcessorTests : IDisposable
     private readonly SqliteTestDb _db = new();
     private readonly CapturingLoggerProvider _logs = new();
     private readonly ILoggerFactory _loggerFactory;
+    private readonly DispatchSignal _signal = new();
 
     public MessageProcessorTests()
     {
@@ -59,6 +61,7 @@ public sealed class MessageProcessorTests : IDisposable
             _db,
             new KeywordFilter([new PatternDefinition(_pattern, "краснопавлівк", CaseSensitive: false, Enabled: true)]),
             new DuplicateDetector(Microsoft.Extensions.Options.Options.Create(new MonitoringOptions { ContentDuplicateAcrossSourcesOnly = acrossSourcesOnly })),
+            _signal,
             Microsoft.Extensions.Options.Options.Create(new StorageOptions { StoreUnmatchedText = storeUnmatchedText }),
             Microsoft.Extensions.Options.Options.Create(new NotificationOptions { Enabled = notificationsEnabled }),
             _time,
@@ -324,6 +327,23 @@ public sealed class MessageProcessorTests : IDisposable
         entry.Message.ShouldContain(_sourceAName);
         entry.Message.ShouldContain(_pattern);
         _logs.Lines.ShouldNotContain(l => l.Contains(_alert));
+    }
+
+    // Plan P4b: the dispatcher is woken after the commit of a Pending notification, and only then.
+    [Fact]
+    public async Task P4b_pending_notification_wakes_the_dispatcher_after_commit()
+    {
+        var processor = Processor();
+        var waiting = _signal.WaitAsync(TestContext.Current.CancellationToken).AsTask();
+
+        (await ProcessAsync(processor, Message(_sourceA, 1, ageSeconds: 300))).ShouldBe(ProcessOutcome.SkippedStale);
+        (await ProcessAsync(processor, Message(_sourceA, 2, _unmatched))).ShouldBe(ProcessOutcome.Unmatched);
+        waiting.IsCompleted.ShouldBeFalse();
+
+        (await ProcessAsync(processor, Message(_sourceA, 3))).ShouldBe(ProcessOutcome.Pending);
+
+        await waiting;
+        (await NotificationsAsync(_sourceA, 3)).ShouldHaveSingleItem().Status.ShouldBe(NotificationStatus.Pending);
     }
 
     // AC-F7.1 (creation time) with the AC-F7.2 default: age 121 s → SkippedStale; 120 s → Pending.

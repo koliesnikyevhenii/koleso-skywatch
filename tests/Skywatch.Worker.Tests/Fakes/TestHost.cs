@@ -25,7 +25,8 @@ internal static class TestHost
         IDictionary<string, string?> settings,
         CapturingLoggerProvider? logs = null,
         ITelegramUpdateSource? source = null,
-        TimeProvider? time = null) =>
+        TimeProvider? time = null,
+        INotificationSender? sender = null) =>
         builder =>
         {
             builder.Configuration.Sources.Clear();
@@ -40,6 +41,11 @@ internal static class TestHost
             {
                 builder.Services.AddSingleton(time);
             }
+
+            if (sender is not null)
+            {
+                builder.Services.AddSingleton(sender);
+            }
         };
 
     public static IHost Build(
@@ -47,8 +53,9 @@ internal static class TestHost
         IDictionary<string, string?> settings,
         CapturingLoggerProvider? logs = null,
         ITelegramUpdateSource? source = null,
-        TimeProvider? time = null) =>
-        Program.BuildHost(args, Configure(settings, logs, source, time));
+        TimeProvider? time = null,
+        INotificationSender? sender = null) =>
+        Program.BuildHost(args, Configure(settings, logs, source, time, sender));
 
     /// <summary>Valid run-mode settings: Telegram settings plus the given sources as <c>Monitoring:Sources</c>.</summary>
     public static Dictionary<string, string?> RunModeSettings(string sessionPath, params (long ChatId, string Name)[] sources)
