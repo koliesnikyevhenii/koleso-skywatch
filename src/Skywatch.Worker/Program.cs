@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Configuration.Json;
@@ -16,12 +17,13 @@ using Telegram.Bot;
 
 return await Program.RunAsync(args, configure: null, CancellationToken.None);
 
-/// <summary>Run modes selected by the first argument (AC-F1.1–F1.3). <c>rescan</c> arrives in P6b.</summary>
+/// <summary>Run modes selected by the first argument (AC-F1.1–F1.3, AC-F1.6).</summary>
 internal enum RunMode
 {
     Run,
     Login,
     ListChats,
+    Rescan,
 }
 
 public partial class Program
@@ -33,6 +35,13 @@ public partial class Program
         if (ParseRunMode(args) is not { } mode)
         {
             LogUnknownRunMode(logger, args[0]);
+            return 2;
+        }
+
+        string? rescanPattern = null;
+        if (mode == RunMode.Rescan && !TryParseRescanPattern(args, out rescanPattern))
+        {
+            LogInvalidRescanArguments(logger);
             return 2;
         }
 
@@ -60,9 +69,12 @@ public partial class Program
 
         try
         {
-            return mode == RunMode.Login
-                ? await host.Services.GetRequiredService<LoginCommand>().RunAsync(bridge, ct)
-                : await host.Services.GetRequiredService<ListChatsCommand>().RunAsync(ct);
+            return mode switch
+            {
+                RunMode.Login => await host.Services.GetRequiredService<LoginCommand>().RunAsync(bridge, ct),
+                RunMode.Rescan => await host.Services.GetRequiredService<RescanCommand>().RunAsync(rescanPattern, Console.Out, ct),
+                _ => await host.Services.GetRequiredService<ListChatsCommand>().RunAsync(ct),
+            };
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -83,10 +95,28 @@ public partial class Program
         configure?.Invoke(builder);
 
         var mode = ParseRunMode(args) ?? RunMode.Run;
-        builder.Services.AddOptions<TelegramOptions>().BindConfiguration(TelegramOptions.SectionName).ValidateOnStart();
-        builder.Services.AddSingleton<IValidateOptions<TelegramOptions>>(new TelegramOptionsValidator(mode));
+        var telegram = builder.Services.AddOptions<TelegramOptions>().BindConfiguration(TelegramOptions.SectionName);
         var monitoring = builder.Services.AddOptions<MonitoringOptions>().BindConfiguration(MonitoringOptions.SectionName);
         builder.Services.TryAddSingleton(TimeProvider.System);
+        if (mode == RunMode.Rescan)
+        {
+            // AC-F1.6: database and patterns only (no Telegram settings, no session); read-only, no migrations.
+            monitoring.ValidateOnStart();
+            builder.Services.AddSingleton<IValidateOptions<MonitoringOptions>, MonitoringOptionsValidator>();
+            builder.Services.AddOptions<StorageOptions>().BindConfiguration(StorageOptions.SectionName).ValidateOnStart();
+            builder.Services.AddSingleton<IValidateOptions<StorageOptions>, StorageOptionsValidator>();
+            builder.Services.AddOptions<NotificationOptions>().BindConfiguration(NotificationOptions.SectionName);
+            builder.Services.AddSingleton(sp => TimeZoneResolver.ResolveOrThrow(sp.GetRequiredService<IOptions<NotificationOptions>>().Value.DisplayTimeZone));
+            builder.Services.AddDbContextFactory<SkywatchDbContext>(
+                (sp, db) => db.UseSqlite(new SqliteConnectionStringBuilder(sp.GetRequiredService<IOptions<StorageOptions>>().Value.ConnectionString) { Mode = SqliteOpenMode.ReadOnly }.ToString()));
+            builder.Services.AddSingleton<RescanCommand>();
+        }
+        else
+        {
+            telegram.ValidateOnStart();
+            builder.Services.AddSingleton<IValidateOptions<TelegramOptions>>(new TelegramOptionsValidator(mode));
+        }
+
         if (mode == RunMode.Run)
         {
             monitoring.ValidateOnStart();
@@ -95,6 +125,8 @@ public partial class Program
             builder.Services.AddSingleton<IValidateOptions<StorageOptions>, StorageOptionsValidator>();
             builder.Services.AddOptions<NotificationOptions>().BindConfiguration(NotificationOptions.SectionName).ValidateOnStart();
             builder.Services.AddSingleton<IValidateOptions<NotificationOptions>>(new NotificationOptionsValidator());
+            builder.Services.AddOptions<ReportingOptions>().BindConfiguration(ReportingOptions.SectionName).ValidateOnStart();
+            builder.Services.AddSingleton<IValidateOptions<ReportingOptions>, ReportingOptionsValidator>();
             builder.Services.AddSingleton(sp => TimeZoneResolver.ResolveOrThrow(sp.GetRequiredService<IOptions<NotificationOptions>>().Value.DisplayTimeZone));
 
             // Resolved only when something sends, which requires Notifications:Enabled (and so a BotToken).
@@ -119,7 +151,8 @@ public partial class Program
             builder.Services.AddSingleton<DispatchSignal>();
 
             // With notifications disabled nothing is ever Pending, and the bot client (which needs a token) is never built.
-            if (builder.Configuration.GetValue<bool>($"{NotificationOptions.SectionName}:{nameof(NotificationOptions.Enabled)}"))
+            var notificationsEnabled = builder.Configuration.GetValue<bool>($"{NotificationOptions.SectionName}:{nameof(NotificationOptions.Enabled)}");
+            if (notificationsEnabled)
             {
                 builder.Services.AddHostedService<NotificationDispatchService>();
                 builder.Services.AddHostedService<StaleSummaryService>();
@@ -128,6 +161,20 @@ public partial class Program
             }
 
             builder.Services.AddHostedService<RetentionService>();
+
+            // AC-F11.3: with notifications disabled the report goes to the log.
+            if (builder.Configuration.GetValue($"{ReportingOptions.SectionName}:{nameof(ReportingOptions.DailyReportEnabled)}", true))
+            {
+                builder.Services.AddSingleton<DailyReportBuilder>();
+                builder.Services.AddHostedService(sp => new DailyReportService(
+                    sp.GetRequiredService<IDbContextFactory<SkywatchDbContext>>(),
+                    sp.GetRequiredService<DailyReportBuilder>(),
+                    notificationsEnabled ? sp.GetRequiredService<INotificationSender>() : null,
+                    sp.GetRequiredService<IOptions<ReportingOptions>>(),
+                    sp.GetRequiredService<TimeZoneInfo>(),
+                    sp.GetRequiredService<TimeProvider>(),
+                    sp.GetRequiredService<ILogger<DailyReportService>>()));
+            }
         }
 
         builder.Services.AddSingleton<LoginCommand>();
@@ -163,8 +210,25 @@ public partial class Program
         [var first, ..] when first.StartsWith('-') => RunMode.Run, // host switches such as --environment
         ["login", ..] => RunMode.Login,
         ["list-chats", ..] => RunMode.ListChats,
+        ["rescan", ..] => RunMode.Rescan,
         _ => null,
     };
+
+    /// <summary>AC-F1.6: <c>rescan</c> alone, or <c>rescan --pattern &lt;regex&gt;</c>.</summary>
+    internal static bool TryParseRescanPattern(string[] args, out string? pattern)
+    {
+        pattern = null;
+        switch (args)
+        {
+            case ["rescan"]:
+                return true;
+            case ["rescan", RescanCommand.OneOffPatternName, var regex] when !string.IsNullOrWhiteSpace(regex):
+                pattern = regex;
+                return true;
+            default:
+                return false;
+        }
+    }
 
     /// <summary>
     /// CreateApplicationBuilder loads User Secrets only in Development, but `dotnet run` defaults to Production.
@@ -192,8 +256,11 @@ public partial class Program
     [LoggerMessage(Level = LogLevel.Warning, Message = "Pattern '{Pattern}' timed out and is treated as no match for this message.")]
     private static partial void LogPatternTimedOut(ILogger logger, string pattern);
 
-    [LoggerMessage(Level = LogLevel.Critical, Message = "Unknown run mode '{Mode}'. Use `login`, `list-chats` or no argument.")]
+    [LoggerMessage(Level = LogLevel.Critical, Message = "Unknown run mode '{Mode}'. Use `login`, `list-chats`, `rescan` or no argument.")]
     private static partial void LogUnknownRunMode(ILogger logger, string mode);
+
+    [LoggerMessage(Level = LogLevel.Critical, Message = "Invalid arguments. Use `rescan` or `rescan --pattern \"<regex>\"`.")]
+    private static partial void LogInvalidRescanArguments(ILogger logger);
 
     [LoggerMessage(Level = LogLevel.Critical, Message = "Configuration is invalid: {Failures}")]
     private static partial void LogInvalidConfiguration(ILogger logger, IEnumerable<string> failures);
