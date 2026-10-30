@@ -16,6 +16,7 @@ internal sealed class LoginCommand(IOptions<TelegramOptions> options)
 
         using var client = new WTelegram.Client(what => Config(telegram, bridge, what));
         var user = await client.LoginUserIfNeeded().WaitAsync(ct);
+        SessionFiles.ClearRejected(telegram.SessionPath); // AC-F1.8: the new session is usable again
 
         Console.WriteLine($"Logged in as {DisplayName(user)}. Session saved to {sessionPath}.");
         return 0;

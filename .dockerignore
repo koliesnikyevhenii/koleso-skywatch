@@ -9,6 +9,9 @@
 **/*.dat
 **/*.state
 **/.env
+**/appsettings.Development.json
+**/appsettings.Production.json
+**/appsettings.*.local.json
 **/*.user
 .git/
 .github/

@@ -23,6 +23,7 @@ internal sealed partial class ProcessingService(
     EditHandler edits,
     IDbContextFactory<SkywatchDbContext> dbFactory,
     IOptions<TelegramOptions> telegram,
+    WTelegramLogBridge redactor,
     TimeProvider time,
     IHostApplicationLifetime lifetime,
     ILogger<ProcessingService> logger) : BackgroundService
@@ -46,14 +47,14 @@ internal sealed partial class ProcessingService(
         }
         catch (TelegramSessionRejectedException ex)
         {
-            LogSessionRejected(logger, ex.Message);
-            Fail();
+            RejectSession(ex.Message);
             return;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             var errorType = ex.GetType().Name;
-            LogStartFailed(logger, errorType, ex.Message);
+            var error = redactor.Redact(ex.Message);
+            LogStartFailed(logger, errorType, error);
             Fail();
             return;
         }
@@ -176,7 +177,19 @@ internal sealed partial class ProcessingService(
                 LogReconnected(logger, c.AtUtc);
                 await RecordAsync(ServiceEventKind.Reconnected, c.AtUtc, CancellationToken.None);
                 break;
+            case SessionRejected r:
+                RejectSession($"Telegram rejected the session ({r.Reason}).");
+                break;
         }
+    }
+
+    /// <summary>AC-F1.8: the marker keeps the restarted container from reconnecting with the same session (R23).</summary>
+    private void RejectSession(string error)
+    {
+        var redacted = redactor.Redact(error);
+        LogSessionRejected(logger, redacted);
+        SessionFiles.MarkRejected(telegram.Value.SessionPath, time.GetUtcNow().UtcDateTime);
+        Fail();
     }
 
     /// <summary>AC-F3.8: hourly, over live (non-edit) messages received in the last hour. No Telegram requests.</summary>

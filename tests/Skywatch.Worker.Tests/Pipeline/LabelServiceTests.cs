@@ -49,7 +49,7 @@ public sealed class LabelServiceTests : IDisposable
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private long AddNotification(NotificationKind kind)
+    private long AddNotification(NotificationKind kind, NotificationStatus status = NotificationStatus.Sent)
     {
         using var db = _db.CreateDbContext();
         var source = db.Sources.FirstOrDefault() ?? new Source { TelegramChatId = -1000000000042, Name = "Test source A", Type = SourceType.Channel, IsEnabled = true, CreatedAtUtc = DateTime.UnixEpoch };
@@ -68,8 +68,8 @@ public sealed class LabelServiceTests : IDisposable
                 IsMatched = true,
             },
             Kind = kind,
-            Status = NotificationStatus.Sent,
-            BotMessageId = _botMessageId,
+            Status = status,
+            BotMessageId = status == NotificationStatus.Sent ? _botMessageId : null,
             CreatedAtUtc = DateTime.UnixEpoch,
         };
         db.Notifications.Add(notification);
@@ -77,8 +77,8 @@ public sealed class LabelServiceTests : IDisposable
         return notification.Id;
     }
 
-    private LabelPress Press(string? data, long userId = _labeler, long? chatId = _targetChatId) =>
-        new($"cb-{++_nextCallbackId}", data, userId, chatId, _botMessageId);
+    private LabelPress Press(string? data, long userId = _labeler, long? chatId = _targetChatId, int botMessageId = _botMessageId) =>
+        new($"cb-{++_nextCallbackId}", data, userId, chatId, botMessageId);
 
     private string Data(NotificationLabel label, long? notificationId = null) => LabelButtons.Data(notificationId ?? _notificationId, label);
 
@@ -274,5 +274,53 @@ public sealed class LabelServiceTests : IDisposable
 
         (await RowAsync()).Label.ShouldBe(NotificationLabel.Useful);
         _logs.Entries.ShouldContain(e => e.Level == LogLevel.Warning && e.Message.Contains("message to edit not found"));
+    }
+
+    // AC-F10.7: callback data from another message (e.g. a crafted press) does not label this notification.
+    [Fact]
+    public async Task AC_F10_7_press_on_another_bot_message_does_not_label()
+    {
+        (await _labels.HandleAsync(Press(Data(NotificationLabel.Useful), botMessageId: _botMessageId + 1), Ct)).ShouldBe(LabelOutcome.UnknownNotification);
+
+        await NothingStoredAsync();
+        _sender.Answers.ShouldHaveSingleItem().Text.ShouldBe(LabelService.UnknownAnswer);
+    }
+
+    // AC-F10.7: a notification that was never sent (stale, duplicate, failed, pending) cannot be labeled.
+    [Theory]
+    [InlineData(nameof(NotificationStatus.Pending))]
+    [InlineData(nameof(NotificationStatus.SkippedStale))]
+    [InlineData(nameof(NotificationStatus.SkippedDuplicate))]
+    [InlineData(nameof(NotificationStatus.Failed))]
+    public async Task AC_F10_7_notification_that_was_not_sent_cannot_be_labeled(string status)
+    {
+        var unsent = AddNotification(NotificationKind.New, Enum.Parse<NotificationStatus>(status));
+
+        (await _labels.HandleAsync(Press(Data(NotificationLabel.Useful, unsent)), Ct)).ShouldBe(LabelOutcome.UnknownNotification);
+
+        (await RowAsync(unsent)).Label.ShouldBeNull();
+    }
+
+    // AC-F10.8: when storing fails, the press is still answered with the error text and the failure is logged.
+    [Fact]
+    public async Task AC_F10_8_storage_failure_is_answered_and_logged()
+    {
+        var labels = new LabelService(
+            new ThrowingDbFactory(),
+            _sender,
+            Microsoft.Extensions.Options.Options.Create(new NotificationOptions { Enabled = true, TargetChatId = _targetChatId, LabelerUserIds = [_labeler] }),
+            _time,
+            _loggerFactory.CreateLogger<LabelService>());
+
+        (await labels.HandleAsync(Press(Data(NotificationLabel.Useful)), Ct)).ShouldBe(LabelOutcome.Failed);
+
+        _sender.Answers.ShouldHaveSingleItem().Text.ShouldBe(LabelService.FailedAnswer);
+        _sender.Markups.ShouldBeEmpty();
+        _logs.Entries.ShouldContain(e => e.Level == LogLevel.Error && e.Message.Contains("Storing the label press"));
+    }
+
+    private sealed class ThrowingDbFactory : IDbContextFactory<Skywatch.Worker.Persistence.SkywatchDbContext>
+    {
+        public Skywatch.Worker.Persistence.SkywatchDbContext CreateDbContext() => throw new InvalidOperationException("database is locked");
     }
 }

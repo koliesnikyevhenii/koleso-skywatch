@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using Skywatch.Worker.Options;
 using Skywatch.Worker.Pipeline;
 using Telegram.Bot;
+using Telegram.Bot.Exceptions;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 
@@ -47,10 +48,14 @@ internal sealed partial class BotCallbackListener(
             }
             catch (Exception ex)
             {
-                LogPollFailed(logger, BotNotificationSender.Redact(ex.Message, options.Value.BotToken), backoff.TotalSeconds);
+                // AC-F10.9: a 429 says how long to wait; never poll earlier than that.
+                var wait = ex is ApiRequestException { Parameters.RetryAfter: { } retryAfter } && TimeSpan.FromSeconds(retryAfter) > backoff
+                    ? TimeSpan.FromSeconds(retryAfter)
+                    : backoff;
+                LogPollFailed(logger, BotNotificationSender.Redact(ex.Message, options.Value.BotToken), wait.TotalSeconds);
                 try
                 {
-                    await Task.Delay(backoff, time, stoppingToken);
+                    await Task.Delay(wait, time, stoppingToken);
                 }
                 catch (OperationCanceledException)
                 {

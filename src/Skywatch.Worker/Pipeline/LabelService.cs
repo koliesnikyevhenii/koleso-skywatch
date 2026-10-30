@@ -20,8 +20,14 @@ internal enum LabelOutcome
     /// <summary>AC-F10.5: the callback data is not <c>lbl:{id}:{u|f|d}</c>.</summary>
     Malformed,
 
-    /// <summary>AC-F10.5: no labelable notification has this id (e.g. deleted by retention).</summary>
+    /// <summary>
+    /// AC-F10.5/F10.7: no labelable notification has this id (e.g. deleted by retention), or it is not the sent
+    /// message that was pressed.
+    /// </summary>
     UnknownNotification,
+
+    /// <summary>AC-F10.8: storing the press failed; it is still answered.</summary>
+    Failed,
 }
 
 /// <summary>One button press, mapped from a Telegram callback query by <see cref="BotCallbackListener"/>.</summary>
@@ -95,11 +101,23 @@ internal sealed partial class LabelService(
     public const string UnauthorizedAnswer = "Немає прав";
     public const string MalformedAnswer = "Невідома дія";
     public const string UnknownAnswer = "Сповіщення не знайдено";
+    public const string FailedAnswer = "Помилка, спробуйте ще раз";
 
     /// <summary>AC-F10.2–F10.5: never throws for bad input; every press is answered.</summary>
     public async Task<LabelOutcome> HandleAsync(LabelPress press, CancellationToken ct)
     {
-        var outcome = await DecideAsync(press, ct);
+        LabelOutcome outcome;
+        try
+        {
+            outcome = await DecideAsync(press, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // AC-F10.8: the labeler is told, instead of a button that keeps spinning.
+            LogStoreFailed(logger, ex, press.UserId);
+            outcome = LabelOutcome.Failed;
+        }
+
         await AnswerAsync(press, outcome, ct);
         if (outcome == LabelOutcome.Labeled
             && press.BotMessageId is { } botMessageId
@@ -129,11 +147,14 @@ internal sealed partial class LabelService(
             return options.Value.LabelerUserIds.Contains(press.UserId) ? LabelOutcome.Malformed : LabelOutcome.Unauthorized;
         }
 
-        return await ApplyAsync(notificationId, label, press.UserId, ct);
+        return await ApplyAsync(notificationId, label, press.UserId, press.BotMessageId, ct);
     }
 
-    /// <summary>AC-F10.2–F10.4: the latest press by a labeler wins.</summary>
-    public async Task<LabelOutcome> ApplyAsync(long notificationId, NotificationLabel label, long userId, CancellationToken ct)
+    /// <summary>
+    /// AC-F10.2–F10.4: the latest press by a labeler wins. AC-F10.7: only on the sent message that carries the
+    /// buttons, so callback data copied from another message cannot label a notification that was never sent.
+    /// </summary>
+    public async Task<LabelOutcome> ApplyAsync(long notificationId, NotificationLabel label, long userId, int? botMessageId, CancellationToken ct)
     {
         if (!options.Value.LabelerUserIds.Contains(userId))
         {
@@ -142,7 +163,13 @@ internal sealed partial class LabelService(
         }
 
         await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var notification = await db.Notifications.SingleOrDefaultAsync(n => n.Id == notificationId && n.Kind != NotificationKind.EditReply, ct);
+        var notification = await db.Notifications.SingleOrDefaultAsync(
+            n => n.Id == notificationId
+                && n.Kind != NotificationKind.EditReply
+                && n.Status == NotificationStatus.Sent
+                && n.BotMessageId != null
+                && n.BotMessageId == botMessageId,
+            ct);
         if (notification is null)
         {
             LogUnknown(logger, userId, notificationId);
@@ -164,6 +191,7 @@ internal sealed partial class LabelService(
             LabelOutcome.Labeled => SavedAnswer,
             LabelOutcome.Unauthorized => UnauthorizedAnswer,
             LabelOutcome.Malformed => MalformedAnswer,
+            LabelOutcome.Failed => FailedAnswer,
             _ => UnknownAnswer,
         };
         var result = await sender.AnswerCallbackAsync(press.CallbackQueryId, text, ct);
@@ -187,6 +215,9 @@ internal sealed partial class LabelService(
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Label press by user {UserId} on unknown notification {NotificationId}; ignored.")]
     private static partial void LogUnknown(ILogger logger, long userId, long notificationId);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Storing the label press by user {UserId} failed; the press is answered with an error.")]
+    private static partial void LogStoreFailed(ILogger logger, Exception exception, long userId);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Answering the label press by user {UserId} failed: {Result}")]
     private static partial void LogAnswerFailed(ILogger logger, long userId, SendResult result);

@@ -94,4 +94,84 @@ public class RunModeTests
         exitCode.ShouldNotBe(0);
         logs.Entries.ShouldContain(e => e.Level == LogLevel.Critical && e.Message.Contains("logn"));
     }
+
+    // AC-F1.7: a second process on the same session (the lock is held) logs a Critical naming the lock file and
+    // exits non-zero before anything connects to Telegram (R22).
+    [Theory]
+    [InlineData("")]
+    [InlineData("list-chats")]
+    [InlineData("login")]
+    public async Task AC_F1_7_second_process_on_the_same_session_exits_with_critical_without_connecting(string mode)
+    {
+        var logs = new CapturingLoggerProvider();
+        using var session = TestHost.ExistingSessionFile();
+        var settings = TestHost.RunModeSettings(session.Path, (-1000000000042, "Test source"));
+        var source = new FakeUpdateSource();
+        using var held = SessionFiles.TryLock(session.Path);
+        held.ShouldNotBeNull();
+
+        var exitCode = await Program.RunAsync(mode.Length == 0 ? [] : [mode], TestHost.Configure(settings, logs, source), TestContext.Current.CancellationToken);
+
+        exitCode.ShouldNotBe(0);
+        source.ResolveCalls.ShouldBe(0);
+        logs.Entries.ShouldContain(e => e.Level == LogLevel.Critical && e.Message.Contains("Another Skywatch process") && e.Message.Contains(SessionFiles.LockPath(session.Path)));
+    }
+
+    // AC-F1.8: a rejection at start leaves the marker; the next start (the container restart) fails with a Critical
+    // telling to run `login` and never connects (R23).
+    [Fact]
+    public async Task AC_F1_8_rejected_session_is_marked_and_the_next_start_does_not_connect()
+    {
+        using var session = TestHost.ExistingSessionFile();
+        var settings = TestHost.RunModeSettings(session.Path, (-1000000000042, "Test source"));
+        var rejecting = new FakeUpdateSource { ResolveFailure = new TelegramSessionRejectedException("AUTH_KEY_UNREGISTERED") };
+        (await Program.RunAsync([], TestHost.Configure(settings, new CapturingLoggerProvider(), rejecting), TestContext.Current.CancellationToken)).ShouldNotBe(0);
+        SessionFiles.IsMarkedRejected(session.Path).ShouldBeTrue();
+
+        var logs = new CapturingLoggerProvider();
+        var restarted = new FakeUpdateSource();
+        var exitCode = await Program.RunAsync([], TestHost.Configure(settings, logs, restarted), TestContext.Current.CancellationToken);
+
+        exitCode.ShouldNotBe(0);
+        restarted.ResolveCalls.ShouldBe(0);
+        logs.Entries.ShouldContain(e => e.Level == LogLevel.Critical && e.Message.Contains("rejected") && e.Message.Contains("login"));
+    }
+
+    // AC-F1.8: a rejection while reconnecting stops the running service with a Critical and leaves the marker.
+    [Fact]
+    public async Task AC_F1_8_rejection_while_reconnecting_stops_the_service_and_marks_the_session()
+    {
+        var logs = new CapturingLoggerProvider();
+        using var session = TestHost.ExistingSessionFile();
+        var settings = TestHost.RunModeSettings(session.Path, (-1000000000042, "Test source"));
+        var source = new FakeUpdateSource { Sources = [new ResolvedSource(-1000000000042, "Test source", SourceType.Channel, null, false, Resolved: true)] };
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(10));
+
+        var run = Program.RunAsync([], TestHost.Configure(settings, logs, source), timeout.Token);
+        source.Emit(new SessionRejected("SESSION_REVOKED", DateTime.UtcNow));
+        var exitCode = await run;
+
+        timeout.IsCancellationRequested.ShouldBeFalse("the service stops by itself");
+        exitCode.ShouldNotBe(0);
+        SessionFiles.IsMarkedRejected(session.Path).ShouldBeTrue();
+        logs.Entries.ShouldContain(e => e.Level == LogLevel.Critical && e.Message.Contains("SESSION_REVOKED") && e.Message.Contains("login"));
+    }
+
+    // AC-F1.5: a listener start error is logged through the secret filter.
+    [Fact]
+    public async Task AC_F1_5_listener_start_error_is_logged_without_secret_values()
+    {
+        var logs = new CapturingLoggerProvider();
+        using var session = TestHost.ExistingSessionFile();
+        var settings = TestHost.RunModeSettings(session.Path, (-1000000000042, "Test source"));
+        var source = new FakeUpdateSource { ResolveFailure = new InvalidOperationException($"failed for {TestHost.FakePhone} with {TestHost.FakeApiHash}") };
+
+        (await Program.RunAsync([], TestHost.Configure(settings, logs, source), TestContext.Current.CancellationToken)).ShouldNotBe(0);
+
+        var critical = logs.Entries.Where(e => e.Level == LogLevel.Critical).ShouldHaveSingleItem();
+        critical.Message.ShouldContain("failed for");
+        critical.Message.ShouldNotContain(TestHost.FakePhone.TrimStart('+'));
+        critical.Message.ShouldNotContain(TestHost.FakeApiHash);
+    }
 }

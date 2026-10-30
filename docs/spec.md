@@ -63,6 +63,9 @@ The Worker executable supports four modes selected by the first argument.
 - **AC-F1.4** — The session file is encrypted with `Telegram:SessionKey`. Session path and key come from configuration; neither is committed.
 - **AC-F1.5** — Log output in all modes contains none of: API hash, phone number, verification code, 2FA password, session key, bot token (verified by an automated log-filter test and an automated run-mode start test with known secret values; the `login` flow is verified manually).
 - **AC-F1.6** — `rescan [--pattern "<regex>"]` reads stored unmatched messages that still have text, runs the configured patterns (or the one-off regex), prints date, source, message id, matching pattern and a text snippet for each hit, and exits with code 0. It is read-only: it sends nothing, writes nothing and applies no migrations.
+- **AC-F1.7** — Single process per session: `login`, `list-chats` and the run mode hold an exclusive lock on `{SessionPath}.lock` for their whole runtime. If another process holds it, the mode logs a `Critical` naming the lock file and exits non-zero without contacting Telegram (risk R22).
+- **AC-F1.8** — When Telegram rejects the session in the run mode (at start or while reconnecting), the service writes the marker `{SessionPath}.rejected` and exits non-zero. While the marker exists, the run mode and `list-chats` fail at startup with a `Critical` telling the operator to run `login`, without contacting Telegram. A successful `login` deletes the marker (risk R23).
+- **AC-F1.9** — The reader client identifies itself with fixed values from configuration (`Telegram:DeviceModel`, `SystemVersion`, `AppVersion`, `LangCode`), so every host and run mode presents the same device. `Telegram:SessionKey` must be at least 16 characters.
 
 ### F2. Source management
 
@@ -83,6 +86,8 @@ The Worker executable supports four modes selected by the first argument.
 - **AC-F3.7** — Disconnects and reconnects are logged (without secrets) and recorded as `ServiceEvents` (from P3 on).
 - **AC-F3.8** — Hourly the service estimates clock skew passively from live messages of the last hour: the minimum of `ReceivedAt − PublishedAt`, excluding differences over 120 s (catch-up). It logs a `Warning` if the minimum exceeds 10 seconds or any value is below −2 seconds; with no data it logs at `Debug` and skips. No extra Telegram requests are made.
 - **AC-F3.9** — Edited messages (`UpdateEditChannelMessage`, `UpdateEditMessage`) are mapped to `IncomingMessage` with `IsEdit = true` and `EditedAtUtc` set, and handled per F9.
+- **AC-F3.10** — `FLOOD_WAIT_X` (error 420 above the client's own auto-retry threshold) at start or while reconnecting is logged at `Warning` with X, and the next attempt waits X seconds plus 5 s. The service does not exit because of it.
+- **AC-F3.11** — When the client's own reconnects are exhausted (`ReactorError`), the client is disposed and recreated with the current update state, so catch-up still works. Failed attempts wait 10 s, doubling up to 10 min. A session rejection stops the attempts (AC-F1.8).
 
 ### F4. Text normalization
 
@@ -188,6 +193,9 @@ Default patterns:
 - **AC-F10.4** — A press by any other user changes nothing and answers the callback with `Немає прав`.
 - **AC-F10.5** — Callback data is `lbl:{notificationId}:{u|f|d}`. Malformed data or an unknown notification id is answered and logged at `Warning`, without throwing.
 - **AC-F10.6** — Bot callbacks are received via long polling in a hosted service in the same Worker process.
+- **AC-F10.7** — A press counts only when the notification was `Sent` as the very message that was pressed (`BotMessageId`); otherwise it is answered `Сповіщення не знайдено` and nothing changes.
+- **AC-F10.8** — If storing a press fails, the press is still answered (`Помилка, спробуйте ще раз`) and the error is logged.
+- **AC-F10.9** — A 429 on `getUpdates` waits `retry_after` (at least the backoff). A 429 on answering a press does not hold back match notifications.
 
 ### F11. Daily report and metrics
 
@@ -221,7 +229,11 @@ Committed `appsettings.json` contains only non-identifying defaults. Identifying
     "SessionPath": "data/session.dat",
     "SessionKey": "",           // secret
     "UpdateStatePath": "data/updates.state",
-    "UpdateStateSaveIntervalSeconds": 60
+    "UpdateStateSaveIntervalSeconds": 60,
+    "DeviceModel": "Skywatch",  // AC-F1.9: same device on every host
+    "SystemVersion": "Server",
+    "AppVersion": "1.0",
+    "LangCode": "uk"
   },
   "Monitoring": {
     "Enabled": true,
@@ -258,7 +270,7 @@ Committed `appsettings.json` contains only non-identifying defaults. Identifying
 }
 ```
 
-All options classes use `ValidateDataAnnotations` / custom validators and `ValidateOnStart`. In normal run mode, startup fails if `Telegram:ApiId`, `ApiHash` or `SessionKey` is missing, or if `Notifications:Enabled = true` and `BotToken` or `TargetChatId` is missing.
+All options classes use `ValidateDataAnnotations` / custom validators and `ValidateOnStart`. In normal run mode, startup fails if `Telegram:ApiId`, `ApiHash` or `SessionKey` is missing (or `SessionKey` is shorter than 16 characters), if the session was rejected earlier (AC-F1.8), or if `Notifications:Enabled = true` and `BotToken` or `TargetChatId` is missing.
 
 ## 7. Data model (SQLite, EF Core)
 

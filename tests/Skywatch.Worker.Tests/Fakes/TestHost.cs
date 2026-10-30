@@ -149,6 +149,12 @@ internal static class TestHost
 
         public string Path { get; }
 
-        public void Dispose() => File.Delete(Path);
+        /// <summary>Also deletes the session lock and the rejection marker next to it (AC-F1.7, AC-F1.8).</summary>
+        public void Dispose()
+        {
+            File.Delete(Path);
+            File.Delete(Path + ".lock");
+            File.Delete(Path + ".rejected");
+        }
     }
 }

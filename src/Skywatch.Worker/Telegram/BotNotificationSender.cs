@@ -29,7 +29,10 @@ internal sealed class BotNotificationSender(ITelegramBotClient bot, IOptions<Not
     public Task<SendResult> ReplyAsync(long replyToBotMessageId, OutgoingNotification notification, CancellationToken ct) =>
         SendCoreAsync(notification, new ReplyParameters { MessageId = checked((int)replyToBotMessageId) }, ct);
 
-    /// <summary>Succeeds with bot message id 0: an answer creates no message.</summary>
+    /// <summary>
+    /// Succeeds with bot message id 0: an answer creates no message. AC-F10.9: answers bypass the gate, so a 429 on
+    /// one does not block it either; match notifications are never held back by a button press.
+    /// </summary>
     public Task<SendResult> AnswerCallbackAsync(string callbackQueryId, string text, CancellationToken ct) =>
         CallAsync(
             async () =>
@@ -37,7 +40,8 @@ internal sealed class BotNotificationSender(ITelegramBotClient bot, IOptions<Not
                 await bot.AnswerCallbackQuery(callbackQueryId, text, cancellationToken: ct);
                 return new SendResult.Success(0);
             },
-            ct);
+            ct,
+            blockGateOnRateLimit: false);
 
     /// <summary>Pressing the already chosen label again leaves the markup unchanged, which is not a failure.</summary>
     public async Task<SendResult> SetLabelMarkupAsync(int botMessageId, long notificationId, NotificationLabel label, CancellationToken ct)
@@ -74,7 +78,7 @@ internal sealed class BotNotificationSender(ITelegramBotClient bot, IOptions<Not
             ct);
     }
 
-    private async Task<SendResult> CallAsync(Func<Task<SendResult>> call, CancellationToken ct)
+    private async Task<SendResult> CallAsync(Func<Task<SendResult>> call, CancellationToken ct, bool blockGateOnRateLimit = true)
     {
         try
         {
@@ -83,7 +87,11 @@ internal sealed class BotNotificationSender(ITelegramBotClient bot, IOptions<Not
         catch (ApiRequestException ex) when (ex.ErrorCode == _tooManyRequests)
         {
             var retryAfter = TimeSpan.FromSeconds(Math.Max(ex.Parameters?.RetryAfter ?? 1, 1));
-            _gate.BlockUntil(time.GetUtcNow() + retryAfter);
+            if (blockGateOnRateLimit)
+            {
+                _gate.BlockUntil(time.GetUtcNow() + retryAfter);
+            }
+
             return new SendResult.RateLimited(retryAfter);
         }
         catch (ApiRequestException ex) when (ex.ErrorCode >= _firstServerError)
