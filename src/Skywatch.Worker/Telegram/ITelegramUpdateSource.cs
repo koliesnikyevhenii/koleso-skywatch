@@ -39,6 +39,9 @@ internal enum ConnectionState
 
 internal sealed record ConnectionStateChanged(ConnectionState State, DateTime AtUtc) : SourceEvent;
 
+/// <summary>Telegram rejected the session while reconnecting (AC-F1.8): the service has to stop.</summary>
+internal sealed record SessionRejected(string Reason, DateTime AtUtc) : SourceEvent;
+
 internal enum SourceType
 {
     Channel,

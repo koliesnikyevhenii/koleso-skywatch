@@ -6,7 +6,8 @@
 | Source idea | [docs/source/telegram_local_alert_aggregator_feature_plan.md](../source/telegram_local_alert_aggregator_feature_plan.md) |
 | Created | 2026-10-26 |
 | Revised | 2026-10-27 — architect review applied (see §10) |
-| Phases | P0, P1a, P1b, P2, P3a, P3b, P4a, P4b, P5, P6a, P6b, P7 (12 phases, one Claude session each) |
+| Revised | 2026-10-30 — P8 added after the security and Telegram-policy review (owner request) |
+| Phases | P0, P1a, P1b, P2, P3a, P3b, P4a, P4b, P5, P6a, P6b, P7, P8 (13 phases, one Claude session each) |
 
 ---
 
@@ -452,6 +453,33 @@ Each phase ends with `/verify` green and a commit. Tests are named after the AC 
 
 **Files:** `Dockerfile`, `.dockerignore`, `deploy/*`, `Program.cs` (Windows service, shutdown, JSON logging), tests.
 
+### P8 — Hardening after review
+
+Added 2026-10-30 at the owner's request after a security review and a Telegram-policy (ban risk) review of P0–P7. Owner decisions: bot pacing (≈20 messages/min per group) is not needed, match traffic is low; the Windows Service folder permissions are accepted, the owner is the machine's only admin.
+
+**Scope**
+- One process per session: `SessionFiles` lock on `{SessionPath}.lock` (`FileShare.None`, an advisory `flock` on Linux) taken in `Program.RunAsync` for `login`, `list-chats` and the run mode (AC-F1.7).
+- Session rejection marker `{SessionPath}.rejected`: written by `ProcessingService` when the session is rejected at start or while reconnecting (new `SessionRejected` source event); checked by `TelegramOptionsValidator` for the run mode and `list-chats`; deleted by `login` (AC-F1.8). This stops Docker's `restart: unless-stopped` from reconnecting with a dead session in a loop.
+- `TelegramRetry`: FLOOD_WAIT honoured at start and on reconnect (AC-F3.10); reconnect recreates the client and the `UpdateManager` from the current state, backoff 10 s → 10 min, 401 stops (AC-F3.11).
+- Fixed device identity options and `SessionKey` length ≥ 16 (AC-F1.9).
+- Labeling: press tied to `BotMessageId` and `Sent` (AC-F10.7); answered on a storage failure (AC-F10.8); `getUpdates` 429 uses `retry_after`, a 429 on answering a press does not block the send gate (AC-F10.9).
+- `WTelegramLogBridge` registered in DI; `ProcessingService` redacts listener start errors with it (AC-F1.5).
+- `.dockerignore` excludes local `appsettings.Development/Production/*.local.json`; `deploy/README.md`: stop before `list-chats`/`login`, log in on the VPS, delete a copied session, `chmod 600`, `umask 077` for backups, `--pull`, the rejection marker; `.env.example`: device identity keys.
+
+**Out of scope:** bot pacing; Windows folder ACLs; persisting a FLOOD_WAIT "not before" across restarts (the service waits in process instead).
+
+**Acceptance criteria:** AC-F1.5, AC-F1.7–F1.9, AC-F3.10, AC-F3.11, AC-F10.7–F10.9. Manual: `docker compose run --rm skywatch list-chats` while the service runs fails with the lock message.
+
+**Tests-first list**
+- Second lock on the same session fails; run mode with a held lock exits non-zero with a Critical and never resolves sources.
+- Rejection at start writes the marker; the next start fails validation with `login` in the Critical; `login` success clears it (marker helpers).
+- Reconnect loop with a scripted reconnect step and `FakeTimeProvider`: FLOOD_WAIT X waits X + 5 s; failures back off 10, 20, 40 s capped at 10 min; rejection stops and emits `SessionRejected`.
+- Validator: short `SessionKey` fails; device identity values reach the WTelegram config callback.
+- Label press on another bot message or a non-`Sent` notification → `UnknownNotification`; storage failure → answered with the error text.
+- Callback listener: 429 waits `retry_after`; sender: a 429 on `AnswerCallbackAsync` leaves the gate open.
+
+**Files:** `Telegram/SessionFiles.cs`, `Telegram/TelegramRetry.cs`, `Telegram/WTelegramUpdateSource.cs`, `Telegram/ITelegramUpdateSource.cs`, `Telegram/LoginCommand.cs`, `Telegram/BotNotificationSender.cs`, `Telegram/BotCallbackListener.cs`, `Options/TelegramOptions.cs`, `Hosting/ProcessingService.cs`, `Pipeline/LabelService.cs`, `Program.cs`, `.dockerignore`, `deploy/*`, `docs/spec.md`, tests.
+
 ## 5. New dependencies and infrastructure
 
 | Item | Purpose | Notes |
@@ -496,6 +524,8 @@ All package versions: latest stable at P0, pinned in `Directory.Packages.props`.
 | R19 | Stale summary or daily report sent twice after an unknown-delivery timeout (send first, mark on success). | Accepted for the test group. |
 | R20 | Long processing stall → channel full → spurious reconnects. | `Warning` at > 80% full; WAL + busy timeout keep DB waits short. |
 | R21 | A restart within the 15 s `ReplyOnChange` debounce window drops that reply (debounce is in memory). | Accepted; `ReplyOnChange` is not the default mode. |
+| R22 | Two processes on one session (`list-chats` while the service runs, a copied session file) → `AUTH_KEY_DUPLICATED`, the session is invalidated, a new login is needed (ban risk). | Session lock file (AC-F1.7, P8); runbook: stop first, delete copies. |
+| R23 | A rejected session or a long FLOOD_WAIT plus `restart: unless-stopped` → reconnect loop against Telegram. | Rejection marker (AC-F1.8), FLOOD_WAIT honoured in process (AC-F3.10), reconnect backoff to 10 min (AC-F3.11). |
 
 ## 7. Out of scope (feature-wide)
 

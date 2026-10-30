@@ -46,11 +46,19 @@ public partial class Program
             return 2;
         }
 
-        var configuration = host.Services.GetRequiredService<IConfiguration>();
-        var bridge = new WTelegramLogBridge(
-            host.Services.GetRequiredService<ILoggerFactory>(),
-            [configuration["Telegram:ApiHash"], configuration["Telegram:PhoneNumber"], configuration["Telegram:SessionKey"]]);
+        var bridge = host.Services.GetRequiredService<WTelegramLogBridge>();
         bridge.Install();
+
+        // AC-F1.7: one process per session, checked before anything can connect (R22). Rescan never connects.
+        var sessionPath = host.Services.GetRequiredService<IConfiguration>()[$"{TelegramOptions.SectionName}:{nameof(TelegramOptions.SessionPath)}"]
+            ?? new TelegramOptions().SessionPath;
+        using var sessionLock = mode == RunMode.Rescan || string.IsNullOrWhiteSpace(sessionPath) ? null : SessionFiles.TryLock(sessionPath);
+        if (mode != RunMode.Rescan && !string.IsNullOrWhiteSpace(sessionPath) && sessionLock is null)
+        {
+            var lockPath = SessionFiles.LockPath(sessionPath);
+            LogSessionInUse(logger, lockPath);
+            return 1;
+        }
 
         try
         {
@@ -192,6 +200,13 @@ public partial class Program
 
         builder.Services.AddSingleton<LoginCommand>();
         builder.Services.AddSingleton<ListChatsCommand>();
+        builder.Services.AddSingleton(sp =>
+        {
+            var configuration = sp.GetRequiredService<IConfiguration>();
+            return new WTelegramLogBridge(
+                sp.GetRequiredService<ILoggerFactory>(),
+                [configuration["Telegram:ApiHash"], configuration["Telegram:PhoneNumber"], configuration["Telegram:SessionKey"]]);
+        });
 
         var host = builder.Build();
         var logger = host.Services.GetRequiredService<ILogger<Program>>();
@@ -276,6 +291,9 @@ public partial class Program
 
     [LoggerMessage(Level = LogLevel.Critical, Message = "Invalid arguments. Use `rescan` or `rescan --pattern \"<regex>\"`.")]
     private static partial void LogInvalidRescanArguments(ILogger logger);
+
+    [LoggerMessage(Level = LogLevel.Critical, Message = "Another Skywatch process is using this session (lock '{LockPath}'). Stop it first (`docker compose stop`), then retry.")]
+    private static partial void LogSessionInUse(ILogger logger, string lockPath);
 
     [LoggerMessage(Level = LogLevel.Critical, Message = "Configuration is invalid: {Failures}")]
     private static partial void LogInvalidConfiguration(ILogger logger, IEnumerable<string> failures);

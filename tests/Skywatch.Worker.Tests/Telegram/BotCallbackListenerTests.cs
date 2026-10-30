@@ -159,6 +159,22 @@ public sealed class BotCallbackListenerTests : IDisposable
         await _listener.StopAsync(Ct);
     }
 
+    // AC-F10.9: a 429 on getUpdates waits retry_after when that is longer than the backoff.
+    [Fact]
+    public async Task AC_F10_9_rate_limited_poll_waits_retry_after()
+    {
+        _bot.FailPoll(new ApiRequestException("Too Many Requests: retry after 30", 429, new ResponseParameters { RetryAfter = 30 }));
+        await _listener.StartAsync(Ct);
+
+        await PollsAsync(1);
+        await _time.TimersCreatedAtLeast(1);
+        _time.Advance(TimeSpan.FromSeconds(30) - TimeSpan.FromTicks(1));
+        _bot.Polls.Count.ShouldBe(1);
+        _time.Advance(TimeSpan.FromTicks(1));
+        await PollsAsync(2);
+        await _listener.StopAsync(Ct);
+    }
+
     // AC-F10.6: the run-mode host with notifications enabled polls for callbacks; with notifications disabled it
     // does not (no bot is used at all).
     [Theory]

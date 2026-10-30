@@ -68,6 +68,10 @@ public sealed class ShutdownTests : IDisposable
         var source = Source(holdUntilStopped: true);
         using var host = TestHost.Build([], _settings, source: source, time: _time, sender: new FakeNotificationSender());
         await host.StartAsync(Ct);
+
+        // .NET 10 runs ExecuteAsync in the background: a stop before it begins would skip the service entirely,
+        // which is not the scenario here (messages queued while the service runs).
+        await Eventually.ShouldHappen(() => source.ResolveCalls == 1, "the listener connected");
         for (var i = 1; i <= 5; i++)
         {
             source.Emit(Message(i));

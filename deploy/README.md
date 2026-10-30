@@ -14,6 +14,15 @@ so the data volume is `skywatch_skywatch-data`, mounted at `/app/data` in the co
 
 The session file is a full login to the reader account (risk R2): never copy it anywhere else, never commit it.
 
+Two more files appear next to it: `session.dat.lock` (held by the running process) and, only after Telegram rejected
+the session, `session.dat.rejected` (see 6).
+
+> **One process per session (risk R22).** Telegram invalidates a session used by two processes at once
+> (`AUTH_KEY_DUPLICATED`), and a new login is needed: the kind of churn that gets an account restricted. Skywatch
+> refuses to start a second process on the same session (`Another Skywatch process is using this session`), but only
+> for the same file. Never run a copy of the session anywhere else (dev machine, Windows Service) at the same time.
+> Stop the service before `login` or `list-chats`.
+
 ## 1. Provision the VPS (minimal)
 
 1. A small Linux VPS (1 vCPU, 1 GB RAM is plenty; N2).
@@ -44,10 +53,14 @@ docker compose build
 docker compose run --rm skywatch login
 ```
 
+Logging in on the VPS is preferred: the account then logs in from the address it runs from.
+
 Or copy a session created elsewhere with `dotnet run --project src/Skywatch.Worker -- login`. Copy the file **and**
-use the same `Telegram__SessionKey` in `.env`:
+use the same `Telegram__SessionKey` in `.env`, then delete every other copy, including the original on the dev
+machine:
 
 ```sh
+chmod 600 session.dat
 docker compose run --rm -v "$PWD/session.dat:/tmp/session.dat:ro" --entrypoint cp skywatch /tmp/session.dat /app/data/session.dat
 rm session.dat
 ```
@@ -55,6 +68,7 @@ rm session.dat
 ## 4. Choose the sources
 
 ```sh
+docker compose stop              # only if the service already runs: one process per session
 docker compose run --rm skywatch list-chats
 ```
 
@@ -75,7 +89,7 @@ Put the chosen marked ids (`-100…`) and names into `.env` as `Monitoring__Sour
 ## 6. Start, stop, logs
 
 ```sh
-docker compose up -d --build     # start (or update after git pull)
+docker compose build --pull && docker compose up -d   # start, or update after git pull (--pull: base image patches)
 docker compose logs -f           # JSON logs; rotated by Docker (5 × 10 MB)
 docker compose restart           # session, update state, DB and Pending notifications are kept
 docker compose stop              # graceful: drains queued messages, writes the Stopped event (≤ 30 s)
@@ -89,13 +103,21 @@ The container restarts by itself after a crash (`restart: unless-stopped`, Docke
 
 ### When the log says `Critical … run login`
 
-The session is missing or was rejected (for example, terminated from another device). Then:
+The session is missing or was rejected (for example, terminated from another device). After a rejection Skywatch
+writes `session.dat.rejected` and refuses to connect again until `login` succeeds, so the restart policy cannot
+retry the dead session in a loop (risk R23). Find out why first (a second process? terminated on the phone?), then:
 
 ```sh
 docker compose stop
-docker compose run --rm skywatch login
+docker compose run --rm skywatch login     # deletes the marker on success
 docker compose up -d
 ```
+
+### FLOOD_WAIT and reconnects
+
+`Telegram asked to wait (FLOOD_WAIT)` means Telegram rate-limited the account. Skywatch waits as long as asked plus
+5 s and does not exit. Repeated `Reconnect to Telegram failed … retrying in N s` back off up to 10 minutes. If either
+keeps coming back, stop the service and investigate rather than letting it retry.
 
 ## 7. Data for the analysis
 
@@ -117,7 +139,7 @@ after the analysis.
 ```sh
 docker compose stop
 docker run --rm -v skywatch_skywatch-data:/data -v "$PWD":/backup alpine \
-  sh -c 'cd /data && tar czf /backup/skywatch-db-$(date +%F).tgz skywatch.db*'
+  sh -c 'umask 077 && cd /data && tar czf /backup/skywatch-db-$(date +%F).tgz skywatch.db*'
 docker compose start
 ```
 

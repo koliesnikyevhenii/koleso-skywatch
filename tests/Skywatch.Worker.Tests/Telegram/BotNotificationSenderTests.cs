@@ -82,6 +82,19 @@ public sealed class BotNotificationSenderTests : IDisposable
         _bot.Requests.Last().Text.ShouldBe("summary");
     }
 
+    // AC-F10.9: a 429 on answering a press does not block the gate; the next alert goes out at once.
+    [Fact]
+    public async Task AC_F10_9_rate_limited_callback_answer_does_not_hold_back_alerts()
+    {
+        _bot.Throw(TooManyRequests(30));
+
+        (await _sender.AnswerCallbackAsync("cb-1", "Збережено", TestContext.Current.CancellationToken)).ShouldBe(new SendResult.RateLimited(TimeSpan.FromSeconds(30)));
+
+        var alert = SendAsync(Alert("after"));
+        (await alert.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken)).ShouldBeOfType<SendResult.Success>();
+        _bot.Requests.ShouldHaveSingleItem().Text.ShouldBe("after");
+    }
+
     // Plan P4a send gate: an alert and a report ready at the same time → the alert is sent first, even when the
     // report started waiting earlier.
     [Fact]

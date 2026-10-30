@@ -33,6 +33,10 @@ public sealed class ProcessingServiceTests : IDisposable
         return new IncomingMessage(chatId, id, text, received - latency, received, new OriginKey(chatId, id), IsEdit: false, EditedAtUtc: null);
     }
 
+    // .NET 10 runs ExecuteAsync in the background: a stop that comes before it starts skips the service.
+    private static Task Connected(FakeUpdateSource source) =>
+        Eventually.ShouldHappen(() => source.ResolveCalls == 1, "the service connected");
+
     private async Task<IHost> StartAsync(FakeUpdateSource source, Dictionary<string, string?>? extraSettings = null)
     {
         var settings = TestHost.RunModeSettings(_session.Path, (_sourceA, _sourceAName), (_sourceB, _sourceBName));
@@ -43,6 +47,7 @@ public sealed class ProcessingServiceTests : IDisposable
 
         var host = TestHost.Build([], settings, _logs, source, _time);
         await host.StartAsync(TestContext.Current.CancellationToken);
+        await Connected(source);
         return host;
     }
 
@@ -383,6 +388,7 @@ public sealed class ProcessingServiceTests : IDisposable
     {
         var host = TestHost.Build([], settings, _logs, source, _time);
         await host.StartAsync(TestContext.Current.CancellationToken);
+        await Connected(source);
         return host;
     }
 
