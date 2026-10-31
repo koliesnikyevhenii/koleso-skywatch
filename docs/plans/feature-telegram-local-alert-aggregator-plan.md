@@ -7,6 +7,7 @@
 | Created | 2026-10-26 |
 | Revised | 2026-10-27 — architect review applied (see §10) |
 | Revised | 2026-10-30 — P8 added after the security and Telegram-policy review (owner request) |
+| Revised | 2026-11-01 — AC-F1.9 fix: `SessionKey` must be hex of 32/48/64 characters; the first local `login` failed with a base64 key; AC-F1.3 fix: the run mode supplies `PhoneNumber` on resume, the first local run treated a valid session as rejected (owner approved) |
 | Phases | P0, P1a, P1b, P2, P3a, P3b, P4a, P4b, P5, P6a, P6b, P7, P8 (13 phases, one Claude session each) |
 
 ---
@@ -461,7 +462,7 @@ Added 2026-10-30 at the owner's request after a security review and a Telegram-p
 - One process per session: `SessionFiles` lock on `{SessionPath}.lock` (`FileShare.None`, an advisory `flock` on Linux) taken in `Program.RunAsync` for `login`, `list-chats` and the run mode (AC-F1.7).
 - Session rejection marker `{SessionPath}.rejected`: written by `ProcessingService` when the session is rejected at start or while reconnecting (new `SessionRejected` source event); checked by `TelegramOptionsValidator` for the run mode and `list-chats`; deleted by `login` (AC-F1.8). This stops Docker's `restart: unless-stopped` from reconnecting with a dead session in a loop.
 - `TelegramRetry`: FLOOD_WAIT honoured at start and on reconnect (AC-F3.10); reconnect recreates the client and the `UpdateManager` from the current state, backoff 10 s → 10 min, 401 stops (AC-F3.11).
-- Fixed device identity options and `SessionKey` length ≥ 16 (AC-F1.9).
+- Fixed device identity options and a `SessionKey` WTelegramClient can use: hex of 32, 48 or 64 characters (AC-F1.9; corrected 2026-11-01, the first version only required ≥ 16 characters and the docs suggested base64).
 - Labeling: press tied to `BotMessageId` and `Sent` (AC-F10.7); answered on a storage failure (AC-F10.8); `getUpdates` 429 uses `retry_after`, a 429 on answering a press does not block the send gate (AC-F10.9).
 - `WTelegramLogBridge` registered in DI; `ProcessingService` redacts listener start errors with it (AC-F1.5).
 - `.dockerignore` excludes local `appsettings.Development/Production/*.local.json`; `deploy/README.md`: stop before `list-chats`/`login`, log in on the VPS, delete a copied session, `chmod 600`, `umask 077` for backups, `--pull`, the rejection marker; `.env.example`: device identity keys.

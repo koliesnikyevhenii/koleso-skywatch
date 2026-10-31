@@ -59,13 +59,13 @@ The Worker executable supports four modes selected by the first argument.
 
 - **AC-F1.1** — `login` runs an interactive console flow: it reads `ApiId`, `ApiHash`, `PhoneNumber` from configuration, prompts for the verification code and, if required, the 2FA password, writes an encrypted session file to `Telegram:SessionPath`, prints the logged-in user's display name and exits with code 0.
 - **AC-F1.2** — `list-chats` uses the existing session and prints every chat the reader account belongs to: Bot-API-style marked chat id (e.g. `-100…` for channels), type (`Channel`, `Supergroup`, `Group`), title, public username (if any) and the `noforwards` flag. It then exits with code 0.
-- **AC-F1.3** — With no argument the service runs normally and never prompts for input. If the session file is missing or rejected, it logs a `Critical` message telling the operator to run `login`, and exits with a non-zero code.
+- **AC-F1.3** — With no argument the service runs normally and never prompts for input. If the session file is missing or rejected, it logs a `Critical` message telling the operator to run `login`, and exits with a non-zero code. `Telegram:PhoneNumber` is required in this mode: on resume WTelegramClient checks that the session belongs to that number. Only a request for a verification code or the 2FA password counts as a rejected session.
 - **AC-F1.4** — The session file is encrypted with `Telegram:SessionKey`. Session path and key come from configuration; neither is committed.
 - **AC-F1.5** — Log output in all modes contains none of: API hash, phone number, verification code, 2FA password, session key, bot token (verified by an automated log-filter test and an automated run-mode start test with known secret values; the `login` flow is verified manually).
 - **AC-F1.6** — `rescan [--pattern "<regex>"]` reads stored unmatched messages that still have text, runs the configured patterns (or the one-off regex), prints date, source, message id, matching pattern and a text snippet for each hit, and exits with code 0. It is read-only: it sends nothing, writes nothing and applies no migrations.
 - **AC-F1.7** — Single process per session: `login`, `list-chats` and the run mode hold an exclusive lock on `{SessionPath}.lock` for their whole runtime. If another process holds it, the mode logs a `Critical` naming the lock file and exits non-zero without contacting Telegram (risk R22).
 - **AC-F1.8** — When Telegram rejects the session in the run mode (at start or while reconnecting), the service writes the marker `{SessionPath}.rejected` and exits non-zero. While the marker exists, the run mode and `list-chats` fail at startup with a `Critical` telling the operator to run `login`, without contacting Telegram. A successful `login` deletes the marker (risk R23).
-- **AC-F1.9** — The reader client identifies itself with fixed values from configuration (`Telegram:DeviceModel`, `SystemVersion`, `AppVersion`, `LangCode`), so every host and run mode presents the same device. `Telegram:SessionKey` must be at least 16 characters.
+- **AC-F1.9** — The reader client identifies itself with fixed values from configuration (`Telegram:DeviceModel`, `SystemVersion`, `AppVersion`, `LangCode`), so every host and run mode presents the same device. `Telegram:SessionKey` must be a hex string of 32, 48 or 64 characters: WTelegramClient decodes it as the AES key of the session file, so other values fail at the first login or start. This is checked at startup in every Telegram mode, including `login`.
 
 ### F2. Source management
 
@@ -270,7 +270,7 @@ Committed `appsettings.json` contains only non-identifying defaults. Identifying
 }
 ```
 
-All options classes use `ValidateDataAnnotations` / custom validators and `ValidateOnStart`. In normal run mode, startup fails if `Telegram:ApiId`, `ApiHash` or `SessionKey` is missing (or `SessionKey` is shorter than 16 characters), if the session was rejected earlier (AC-F1.8), or if `Notifications:Enabled = true` and `BotToken` or `TargetChatId` is missing.
+All options classes use `ValidateDataAnnotations` / custom validators and `ValidateOnStart`. In normal run mode, startup fails if `Telegram:ApiId`, `ApiHash` or `SessionKey` is missing (or `SessionKey` is not a hex string of 32, 48 or 64 characters), if the session was rejected earlier (AC-F1.8), or if `Notifications:Enabled = true` and `BotToken` or `TargetChatId` is missing.
 
 ## 7. Data model (SQLite, EF Core)
 

@@ -3,7 +3,7 @@ using Skywatch.Worker.Tests.Fakes;
 
 namespace Skywatch.Worker.Tests.Options;
 
-// AC-F1.9: fixed device identity for the reader client and a minimum session key length.
+// AC-F1.9: fixed device identity for the reader client and a session key WTelegramClient can use.
 public class TelegramIdentityOptionsTests
 {
     // AC-F1.9: the configured device values reach WTelegramClient's config callback; the defaults are fixed values.
@@ -26,22 +26,40 @@ public class TelegramIdentityOptionsTests
     public void AC_F1_9_empty_device_value_uses_the_library_default() =>
         new TelegramOptions { DeviceModel = " " }.WTelegramConfig("device_model").ShouldBeNull();
 
-    // AC-F1.9: a session key shorter than 16 characters fails startup, naming the key but not the value.
+    // AC-F1.9: the session key is the hex AES key of the session file (16, 24 or 32 bytes); anything else fails
+    // startup with a message naming the key, not the value.
     [Theory]
-    [InlineData("short-key", false)]
-    [InlineData("exactly-16-chars", true)]
-    public void AC_F1_9_session_key_needs_at_least_16_characters(string key, bool valid)
+    [InlineData("0123456789abcdef0123456789abcdef", true)]
+    [InlineData("0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF", true)]
+    [InlineData("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", true)]
+    [InlineData("0123456789abcdef", false)]
+    [InlineData("0123456789abcdef0123456789abcdef0123456789", false)]
+    [InlineData("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef00", false)]
+    [InlineData("q2Zx+/abcdefghijklmnopqrstuvwxyz0123456789ABCD=", false)]
+    [InlineData("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz", false)]
+    public void AC_F1_9_session_key_must_be_hex_of_an_aes_key_length(string key, bool valid)
     {
         using var session = TestHost.ExistingSessionFile();
 
-        var result = new TelegramOptionsValidator(RunMode.Run).Validate(null, new TelegramOptions { ApiId = 1, ApiHash = TestHost.FakeApiHash, SessionKey = key, SessionPath = session.Path });
+        var result = new TelegramOptionsValidator(RunMode.Run).Validate(null, new TelegramOptions { ApiId = 1, ApiHash = TestHost.FakeApiHash, PhoneNumber = TestHost.FakePhone, SessionKey = key, SessionPath = session.Path });
 
         result.Succeeded.ShouldBe(valid);
         if (!valid)
         {
             result.FailureMessage.ShouldNotBeNull().ShouldContain("Telegram:SessionKey");
+            result.FailureMessage.ShouldContain("hex");
             result.FailureMessage.ShouldNotContain(key);
         }
+    }
+
+    // AC-F1.9 also for login: a key WTelegramClient cannot use must fail before the code is asked for.
+    [Fact]
+    public void AC_F1_9_invalid_session_key_fails_login_too()
+    {
+        var result = new TelegramOptionsValidator(RunMode.Login).Validate(null, new TelegramOptions { ApiId = 1, ApiHash = TestHost.FakeApiHash, PhoneNumber = TestHost.FakePhone, SessionKey = "not-a-hex-session-key", SessionPath = "data/session.dat" });
+
+        result.Failed.ShouldBeTrue();
+        result.FailureMessage.ShouldContain("Telegram:SessionKey");
     }
 
     // AC-F1.8: the marker blocks the run mode and list-chats, not login (which clears it).
@@ -55,7 +73,7 @@ public class TelegramIdentityOptionsTests
         Skywatch.Worker.Telegram.SessionFiles.MarkRejected(session.Path, DateTime.UtcNow);
 
         var result = new TelegramOptionsValidator(Enum.Parse<RunMode>(mode))
-            .Validate(null, new TelegramOptions { ApiId = 1, ApiHash = TestHost.FakeApiHash, SessionKey = TestHost.FakeSessionKey, SessionPath = session.Path });
+            .Validate(null, new TelegramOptions { ApiId = 1, ApiHash = TestHost.FakeApiHash, PhoneNumber = TestHost.FakePhone, SessionKey = TestHost.FakeSessionKey, SessionPath = session.Path });
 
         result.Succeeded.ShouldBe(valid);
         if (!valid)

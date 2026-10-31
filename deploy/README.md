@@ -37,8 +37,8 @@ the session, `session.dat.rejected` (see 6).
 2. Fill in every empty value in `.env`:
    - `Telegram__ApiId`, `Telegram__ApiHash`: from my.telegram.org for the **dedicated** reader account.
    - `Telegram__PhoneNumber`: the dedicated account's number.
-   - `Telegram__SessionKey`: a long random string, e.g. `openssl rand -base64 32`. Keep it: a session file only
-     opens with the key it was created with.
+   - `Telegram__SessionKey`: 64 random hex characters, `openssl rand -hex 32` (hex of 32, 48 or 64 characters;
+     base64 does not work). Keep it: a session file only opens with the key it was created with.
    - `Notifications__BotToken`, `Notifications__TargetChatId` (the private test group, negative id),
      `Notifications__LabelerUserIds__0` (and `__1`, ...).
    - The sources come later (step 4).
