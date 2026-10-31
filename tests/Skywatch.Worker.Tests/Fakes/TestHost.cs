@@ -15,7 +15,7 @@ internal static class TestHost
 {
     // Fake values only (C4). Distinctive so a leak is easy to spot in captured logs.
     public const string FakeApiHash = "fakeapihash0123456789abcdef0000";
-    public const string FakeSessionKey = "fake-session-key-do-not-log";
+    public const string FakeSessionKey = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
     public const string FakePhone = "+380001112233";
 
     /// <summary>

@@ -9,11 +9,13 @@ namespace Skywatch.Worker.Tests.Options;
 // Plan P1a validation table and spec §6: options are validated per run mode at startup (ValidateOnStart).
 public class RunModeOptionsTests
 {
-    // Spec §6: in normal run mode, startup fails if Telegram:ApiId, ApiHash or SessionKey is missing.
+    // Spec §6: in normal run mode, startup fails if Telegram:ApiId, ApiHash or SessionKey is missing;
+    // AC-F1.3: also PhoneNumber, which WTelegramClient checks against the session on resume.
     [Theory]
     [InlineData("Telegram:ApiId", "0")]
     [InlineData("Telegram:ApiHash", "")]
     [InlineData("Telegram:SessionKey", "")]
+    [InlineData("Telegram:PhoneNumber", "")]
     public async Task Spec_6_run_mode_fails_startup_when_required_telegram_option_is_missing(string key, string emptyValue)
     {
         using var session = TestHost.ExistingSessionFile();

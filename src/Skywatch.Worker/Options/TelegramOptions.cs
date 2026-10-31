@@ -55,8 +55,11 @@ internal sealed class TelegramOptions
 /// <summary>Validation per run mode (plan P1a table). Failure messages name keys, never values (AC-F1.5).</summary>
 internal sealed class TelegramOptionsValidator(RunMode mode) : IValidateOptions<TelegramOptions>
 {
-    /// <summary>AC-F1.9: a short key makes a stolen session file easy to brute-force offline.</summary>
-    internal const int MinSessionKeyLength = 16;
+    /// <summary>
+    /// AC-F1.9: WTelegramClient decodes the key from hex and uses it as the AES key of the session file, so only
+    /// 16, 24 or 32 bytes work. Anything else fails only at the first login or start, deep inside the library.
+    /// </summary>
+    internal static readonly int[] SessionKeyHexLengths = [32, 48, 64];
 
     public ValidateOptionsResult Validate(string? name, TelegramOptions options)
     {
@@ -71,13 +74,19 @@ internal sealed class TelegramOptionsValidator(RunMode mode) : IValidateOptions<
             failures.Add("Telegram:ApiHash is required.");
         }
 
+        if (mode == RunMode.Run && string.IsNullOrWhiteSpace(options.PhoneNumber))
+        {
+            // AC-F1.3: WTelegramClient checks on resume that the session belongs to this number.
+            failures.Add("Telegram:PhoneNumber is required: it is checked against the session on every start.");
+        }
+
         if (string.IsNullOrWhiteSpace(options.SessionKey))
         {
             failures.Add("Telegram:SessionKey is required.");
         }
-        else if (options.SessionKey.Length < MinSessionKeyLength)
+        else if (!IsValidSessionKey(options.SessionKey))
         {
-            failures.Add($"Telegram:SessionKey must be at least {MinSessionKeyLength} characters.");
+            failures.Add("Telegram:SessionKey must be a hex string of 32, 48 or 64 characters, e.g. `openssl rand -hex 32`.");
         }
 
         if (string.IsNullOrWhiteSpace(options.SessionPath))
@@ -97,4 +106,7 @@ internal sealed class TelegramOptionsValidator(RunMode mode) : IValidateOptions<
 
         return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
     }
+
+    private static bool IsValidSessionKey(string key) =>
+        SessionKeyHexLengths.Contains(key.Length) && key.All(char.IsAsciiHexDigit);
 }

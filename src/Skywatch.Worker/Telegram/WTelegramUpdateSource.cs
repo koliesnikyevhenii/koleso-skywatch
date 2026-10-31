@@ -175,13 +175,22 @@ internal sealed partial class WTelegramUpdateSource : ITelegramUpdateSource, IDi
 
     private Client CreateClient()
     {
-        // Run mode never prompts (AC-F1.3): a request for login data means the session is not usable.
-        var client = new Client(what => what is "phone_number" or "verification_code" or "password"
-            ? throw new TelegramSessionRejectedException("not authorized")
-            : _telegram.WTelegramConfig(what));
+        var client = new Client(what => RunModeConfig(_telegram, what));
         client.OnOther += OnOtherAsync;
         return client;
     }
+
+    /// <summary>
+    /// AC-F1.3: the run mode never prompts. On resume WTelegramClient asks for the phone number to check that the
+    /// session belongs to it (its default <c>user_id</c> is -1), so the number comes from configuration. A request
+    /// for a code or the 2FA password means the session is not usable.
+    /// </summary>
+    internal static string? RunModeConfig(TelegramOptions telegram, string what) => what switch
+    {
+        "verification_code" or "password" => throw new TelegramSessionRejectedException("not authorized"),
+        "phone_number" => telegram.WTelegramConfig(what) ?? throw new TelegramSessionRejectedException("not authorized"),
+        _ => telegram.WTelegramConfig(what),
+    };
 
     private UpdateManager CreateUpdateManager(Client client)
     {
