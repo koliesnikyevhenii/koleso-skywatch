@@ -39,6 +39,7 @@ internal sealed partial class MessageProcessor(
     KeywordFilter filter,
     DuplicateDetector duplicates,
     DispatchSignal dispatch,
+    IOptions<MonitoringOptions> monitoring,
     IOptions<StorageOptions> storage,
     IOptions<NotificationOptions> notifications,
     TimeProvider time,
@@ -87,11 +88,24 @@ internal sealed partial class MessageProcessor(
             OriginMessageId = message.Origin.MessageId,
             IsMatched = result.IsMatch,
             MatchedPatterns = result.IsMatch ? string.Join(',', result.Hits.Select(h => h.PatternName)) : null,
+            ReplyToTelegramMessageId = message.ReplyToMessageId,
         };
         db.Messages.Add(row);
 
         var outcome = ProcessOutcome.Unmatched;
-        if (result.IsMatch)
+        FollowUpTarget? followUp = null;
+        if (!result.IsMatch && (followUp = await FindFollowUpTargetAsync(db, source.Id, message, ct)) is { } target)
+        {
+            // AC-F13.1: the text is what gets relayed, so it is kept whatever the storage rule says.
+            row.Text = message.Text;
+            row.FollowUpOfMessageId = target.OriginalMessageId;
+            if (!target.OverLimit)
+            {
+                outcome = _staleness.IsStale(row.PublishedAtUtc, time.GetUtcNow().UtcDateTime) ? ProcessOutcome.SkippedStale : ProcessOutcome.Pending;
+                db.Notifications.Add(new Notification { Message = row, Kind = NotificationKind.FollowUp, Status = ToStatus(outcome), CreatedAtUtc = time.GetUtcNow().UtcDateTime });
+            }
+        }
+        else if (result.IsMatch)
         {
             // AC-F6.5: a duplicate is stored and marked, and its notification is never sent.
             if (await duplicates.FindAsync(db, source.Id, message.Origin, hash, message.ReceivedAtUtc, ct) is { } duplicate)
@@ -124,6 +138,11 @@ internal sealed partial class MessageProcessor(
             dispatch.Notify(); // after the commit, so the dispatcher finds the row
         }
 
+        if (followUp is { } relayed)
+        {
+            LogFollowUp(logger, source.Name, message.ChatId, message.MessageId, relayed.OriginalMessageId, relayed.OverLimit ? "over the limit, not notified" : outcome.ToString());
+        }
+
         if (result.IsMatch)
         {
             var patterns = string.Join(", ", result.Hits.Select(h => h.PatternName));
@@ -133,6 +152,47 @@ internal sealed partial class MessageProcessor(
 
         return outcome;
     }
+
+    /// <summary>
+    /// AC-F13.1/F13.2: the original whose sent alert this reply continues, or <see langword="null"/>. A reply to a
+    /// follow-up continues the same original.
+    /// </summary>
+    private async Task<FollowUpTarget?> FindFollowUpTargetAsync(SkywatchDbContext db, int sourceId, IncomingMessage message, CancellationToken ct)
+    {
+        if (!monitoring.Value.FollowUpsEnabled || !notifications.Value.Enabled || message.ReplyToMessageId is not { } replyTo)
+        {
+            return null;
+        }
+
+        var repliedTo = await db.Messages
+            .Where(m => m.SourceId == sourceId && m.TelegramMessageId == replyTo)
+            .Select(m => new { m.Id, m.FollowUpOfMessageId })
+            .SingleOrDefaultAsync(ct);
+        if (repliedTo is null)
+        {
+            return null;
+        }
+
+        var originalId = repliedTo.FollowUpOfMessageId ?? repliedTo.Id;
+        var original = await db.Messages.Where(m => m.Id == originalId).Select(m => new { m.PublishedAtUtc }).SingleOrDefaultAsync(ct);
+        if (original is null || message.PublishedAtUtc - original.PublishedAtUtc > TimeSpan.FromMinutes(monitoring.Value.FollowUpWindowMinutes))
+        {
+            return null;
+        }
+
+        var alerted = await db.Notifications.AnyAsync(
+            n => n.MessageId == originalId && (n.Kind == NotificationKind.New || n.Kind == NotificationKind.EditNewMatch) && n.Status == NotificationStatus.Sent,
+            ct);
+        if (!alerted)
+        {
+            return null;
+        }
+
+        var notified = await db.Notifications.CountAsync(n => n.Kind == NotificationKind.FollowUp && n.Message!.FollowUpOfMessageId == originalId, ct);
+        return new FollowUpTarget(originalId, OverLimit: notified >= monitoring.Value.FollowUpMaxPerMessage);
+    }
+
+    private sealed record FollowUpTarget(long OriginalMessageId, bool OverLimit);
 
     /// <summary>F7.1 at creation time; a duplicate is reported as such even when it is also stale.</summary>
     private ProcessOutcome Decide(Message row) =>
@@ -169,6 +229,9 @@ internal sealed partial class MessageProcessor(
 
     [LoggerMessage(Level = LogLevel.Information, Message = "{Source} ({ChatId}): message {MessageId} matched {Patterns}, latency {LatencySeconds:0.0} s, {Outcome}")]
     private static partial void LogMatch(ILogger logger, string source, long chatId, int messageId, string patterns, double latencySeconds, ProcessOutcome outcome);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "{Source} ({ChatId}): message {MessageId} is a follow-up of message row {OriginalId}, {Outcome}")]
+    private static partial void LogFollowUp(ILogger logger, string source, long chatId, int messageId, long originalId, string outcome);
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "{Source} ({ChatId}): message {MessageId} is already stored; skipped.")]
     private static partial void LogAlreadyProcessed(ILogger logger, string source, long chatId, int messageId);

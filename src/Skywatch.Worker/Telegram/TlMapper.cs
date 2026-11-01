@@ -55,8 +55,17 @@ internal static class TlMapper
             receivedAtUtc,
             origin,
             isEdit,
-            isEdit ? AsUtc(message.edit_date) : null);
+            isEdit ? AsUtc(message.edit_date) : null,
+            ReplyToMessageId(message));
     }
+
+    /// <summary>AC-F13.1: only a reply within the same chat; a reply naming another peer is not a follow-up.</summary>
+    private static int? ReplyToMessageId(Message message) =>
+        message.reply_to is MessageReplyHeader header
+        && header.flags.HasFlag(MessageReplyHeader.Flags.has_reply_to_msg_id)
+        && !header.flags.HasFlag(MessageReplyHeader.Flags.has_reply_to_peer_id)
+            ? header.reply_to_msg_id
+            : null;
 
     /// <summary>Resolves each enabled configured source against the reader account's chats (AC-F2.2, F2.3).</summary>
     public static IReadOnlyList<ResolvedSource> ResolveSources(IEnumerable<SourceOptions> configured, IEnumerable<ChatBase> chats)

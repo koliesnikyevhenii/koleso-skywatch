@@ -6,7 +6,8 @@ namespace Skywatch.Core.Formatting;
 
 /// <summary>
 /// What one match notification shows. <see cref="EditedAtUtc"/> is set for edit-triggered notifications;
-/// <see cref="Highlights"/> are spans of <see cref="Text"/> to show in bold (AC-F8.14).
+/// <see cref="Highlights"/> are spans of <see cref="Text"/> to show in bold (AC-F8.14); <see cref="IsFollowUp"/>
+/// marks a source's reply to a notified post (AC-F13.3).
 /// </summary>
 public sealed record NotificationContent(
     IReadOnlyList<string> PatternNames,
@@ -15,7 +16,8 @@ public sealed record NotificationContent(
     DateTime PublishedAtUtc,
     DateTime? EditedAtUtc,
     string? Link,
-    IReadOnlyList<TextSpan>? Highlights = null);
+    IReadOnlyList<TextSpan>? Highlights = null,
+    bool IsFollowUp = false);
 
 /// <summary>The message text and the spans of it to send as bold entities (AC-F8.14).</summary>
 public sealed record FormattedNotification(string Text, IReadOnlyList<TextSpan> Bold);
@@ -34,6 +36,9 @@ public static class NotificationFormatter
 
     /// <summary>Shown instead of the pattern names, which stay in the database and the daily report.</summary>
     public const string Tag = "🏷 КП";
+
+    /// <summary>AC-F13.3: the first line of a follow-up starts with this instead of the tag.</summary>
+    public const string FollowUpMarker = "↪️ Продовження";
 
     private const string _ellipsis = "…";
 
@@ -84,7 +89,11 @@ public static class NotificationFormatter
     {
         // Every pattern looks for the same village, and the readers don't know the pattern names: one short tag.
         List<string> parts = [];
-        if (content.PatternNames.Count > 0)
+        if (content.IsFollowUp)
+        {
+            parts.Add(FollowUpMarker);
+        }
+        else if (content.PatternNames.Count > 0)
         {
             parts.Add(Tag);
         }

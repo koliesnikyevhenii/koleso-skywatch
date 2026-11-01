@@ -126,7 +126,8 @@ internal sealed partial class NotificationDispatchService(
         }
 
         var message = notification.Message!;
-        var editedAt = notification.Kind == NotificationKind.New ? null : message.EditedAtUtc;
+        // AC-F7.3 for edits; AC-F13.4: a follow-up is aged from its own publication, like a new message.
+        var editedAt = notification.Kind is NotificationKind.New or NotificationKind.FollowUp ? null : message.EditedAtUtc;
         var now = time.GetUtcNow().UtcDateTime;
         if (_staleness.IsStale(editedAt ?? message.PublishedAtUtc, now))
         {
@@ -143,16 +144,19 @@ internal sealed partial class NotificationDispatchService(
             message.PublishedAtUtc,
             editedAt,
             SourceLinkBuilder.Build(message.Source.TelegramChatId, message.Source.Username, message.TelegramMessageId),
-            filter.Highlights(message.Text));
+            filter.Highlights(message.Text),
+            IsFollowUp: notification.Kind == NotificationKind.FollowUp);
         var formatted = NotificationFormatter.Render(content, now, displayZone);
         var outgoing = new OutgoingNotification(formatted.Text, SendPriority.Alert, Bold: formatted.Bold);
 
         SendResult result;
-        if (notification.Kind == NotificationKind.EditReply)
+        if (notification.Kind is NotificationKind.EditReply or NotificationKind.FollowUp)
         {
-            // AC-F9.5: a reply to the bot message of the alert about this message.
+            // AC-F9.5: a reply to the bot message of the alert about this message; AC-F13.3: for a follow-up, the
+            // alert about the original it continues. Neither carries label buttons.
+            var alertedMessageId = notification.Kind == NotificationKind.FollowUp ? message.FollowUpOfMessageId : message.Id;
             var replyTo = await db.Notifications
-                .Where(n => n.MessageId == message.Id && n.Kind != NotificationKind.EditReply && n.Status == NotificationStatus.Sent && n.BotMessageId != null)
+                .Where(n => n.MessageId == alertedMessageId && (n.Kind == NotificationKind.New || n.Kind == NotificationKind.EditNewMatch) && n.Status == NotificationStatus.Sent && n.BotMessageId != null)
                 .OrderBy(n => n.Id)
                 .Select(n => n.BotMessageId)
                 .FirstOrDefaultAsync(ct);

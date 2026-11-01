@@ -36,6 +36,9 @@ namespace Skywatch.Worker.Persistence.Migrations
                     b.Property<DateTime?>("EditedAtUtc")
                         .HasColumnType("TEXT");
 
+                    b.Property<long?>("FollowUpOfMessageId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("IsDuplicate")
                         .HasColumnType("INTEGER");
 
@@ -57,6 +60,9 @@ namespace Skywatch.Worker.Persistence.Migrations
                     b.Property<DateTime>("ReceivedAtUtc")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("ReplyToTelegramMessageId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("SourceId")
                         .HasColumnType("INTEGER");
 
@@ -69,6 +75,8 @@ namespace Skywatch.Worker.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("DuplicateOfMessageId");
+
+                    b.HasIndex("FollowUpOfMessageId");
 
                     b.HasIndex("ReceivedAtUtc");
 
@@ -201,6 +209,11 @@ namespace Skywatch.Worker.Persistence.Migrations
                         .HasForeignKey("DuplicateOfMessageId")
                         .OnDelete(DeleteBehavior.SetNull);
 
+                    b.HasOne("Skywatch.Worker.Persistence.Entities.Message", "FollowUpOf")
+                        .WithMany()
+                        .HasForeignKey("FollowUpOfMessageId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("Skywatch.Worker.Persistence.Entities.Source", "Source")
                         .WithMany()
                         .HasForeignKey("SourceId")
@@ -208,6 +221,8 @@ namespace Skywatch.Worker.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("DuplicateOf");
+
+                    b.Navigation("FollowUpOf");
 
                     b.Navigation("Source");
                 });

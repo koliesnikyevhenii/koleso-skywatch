@@ -247,4 +247,35 @@ public class TlMapperSourceTests
             (-1000000000046L, "Banned channel", false),
         ]);
     }
+
+    private static readonly DateTime _replyReceived = new(2026, 11, 1, 9, 21, 3, DateTimeKind.Utc);
+
+    private static Message Post(int id, string text) =>
+        new() { id = id, peer_id = new PeerChannel { channel_id = 42 }, date = _replyReceived.AddSeconds(-3), message = text };
+
+    // AC-F13.1: a reply in the same chat carries the replied-to message id.
+    [Fact]
+    public void AC_F13_1_reply_in_the_same_chat_carries_the_replied_to_id()
+    {
+        var post = Post(9, "Не фіксується");
+        post.reply_to = new MessageReplyHeader { flags = MessageReplyHeader.Flags.has_reply_to_msg_id, reply_to_msg_id = 7 };
+
+        TlMapper.ToIncomingMessage(new UpdateNewChannelMessage { message = post }, _replyReceived).ShouldNotBeNull().ReplyToMessageId.ShouldBe(7);
+    }
+
+    // AC-F13.1: a reply that names another chat, or no reply at all, carries no id.
+    [Fact]
+    public void AC_F13_1_reply_to_another_chat_or_no_reply_carries_no_id()
+    {
+        var crossChat = Post(9, "Текст");
+        crossChat.reply_to = new MessageReplyHeader
+        {
+            flags = MessageReplyHeader.Flags.has_reply_to_msg_id | MessageReplyHeader.Flags.has_reply_to_peer_id,
+            reply_to_msg_id = 7,
+            reply_to_peer_id = new PeerChannel { channel_id = 43 },
+        };
+
+        TlMapper.ToIncomingMessage(new UpdateNewChannelMessage { message = crossChat }, _replyReceived).ShouldNotBeNull().ReplyToMessageId.ShouldBeNull();
+        TlMapper.ToIncomingMessage(new UpdateNewChannelMessage { message = Post(10, "Текст") }, _replyReceived).ShouldNotBeNull().ReplyToMessageId.ShouldBeNull();
+    }
 }

@@ -354,4 +354,71 @@ public sealed class NotificationDispatchServiceTests : IDisposable
         _sender.Texts.ShouldHaveSingleItem().ShouldContain("Pending Краснопавлівка");
         await dispatcher.StopAsync(Ct);
     }
+
+    /// <summary>An original with a sent alert (bot message 700) and a pending follow-up published <paramref name="ageSeconds"/> ago.</summary>
+    private async Task<long> PendingFollowUpAsync(double ageSeconds = 1)
+    {
+        await using var db = _db.CreateDbContext();
+        var original = new Message
+        {
+            SourceId = _sourceId,
+            TelegramMessageId = ++_nextTelegramId,
+            Text = "Реактивний БПЛА на Краснопавлівку",
+            PublishedAtUtc = Now.AddMinutes(-10),
+            ReceivedAtUtc = Now.AddMinutes(-10),
+            ContentHash = "hash-original",
+            OriginChatId = _chatId,
+            OriginMessageId = _nextTelegramId,
+            IsMatched = true,
+            MatchedPatterns = "Settlement",
+        };
+        db.Notifications.Add(new Notification { Message = original, Kind = NotificationKind.New, Status = NotificationStatus.Sent, BotMessageId = 700, CreatedAtUtc = Now.AddMinutes(-10) });
+        var reply = new Message
+        {
+            SourceId = _sourceId,
+            TelegramMessageId = ++_nextTelegramId,
+            Text = "Не фіксується",
+            PublishedAtUtc = Now.AddSeconds(-ageSeconds),
+            ReceivedAtUtc = Now,
+            ContentHash = "hash-reply",
+            OriginChatId = _chatId,
+            OriginMessageId = _nextTelegramId,
+            FollowUpOf = original,
+        };
+        var followUp = new Notification { Message = reply, Kind = NotificationKind.FollowUp, Status = NotificationStatus.Pending, CreatedAtUtc = Now };
+        db.Notifications.Add(followUp);
+        await db.SaveChangesAsync(Ct);
+        return followUp.Id;
+    }
+
+    // AC-F13.3: a follow-up is a reply to the original alert's bot message, without label buttons, with its own first line.
+    [Fact]
+    public async Task AC_F13_3_follow_up_is_sent_as_a_reply_to_the_original_alert_without_buttons()
+    {
+        var id = await PendingFollowUpAsync();
+        using var dispatcher = await StartAsync();
+
+        await NotPendingAsync(id);
+
+        (await RowAsync(id)).Status.ShouldBe(NotificationStatus.Sent);
+        var sent = _sender.Sends.ShouldHaveSingleItem();
+        sent.ReplyTo.ShouldBe(700);
+        sent.Notification.LabelNotificationId.ShouldBeNull();
+        sent.Notification.Text.ShouldStartWith("↪️ Продовження · ⚠️ Увага\n\nНе фіксується\n");
+        await dispatcher.StopAsync(Ct);
+    }
+
+    // AC-F13.4: a follow-up is aged from its own publication: an old original does not make it stale, an old reply does.
+    [Fact]
+    public async Task AC_F13_4_stale_follow_up_is_not_sent()
+    {
+        var id = await PendingFollowUpAsync(ageSeconds: 121);
+        using var dispatcher = await StartAsync();
+
+        await NotPendingAsync(id);
+
+        (await RowAsync(id)).Status.ShouldBe(NotificationStatus.SkippedStale);
+        _sender.Sends.ShouldBeEmpty();
+        await dispatcher.StopAsync(Ct);
+    }
 }

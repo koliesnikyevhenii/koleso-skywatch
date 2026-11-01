@@ -39,6 +39,9 @@ internal enum NotificationKind
     New,
     EditNewMatch,
     EditReply,
+
+    /// <summary>F13: a source's reply to a notified post, sent as a reply to its alert.</summary>
+    FollowUp,
 }
 
 internal enum NotificationStatus

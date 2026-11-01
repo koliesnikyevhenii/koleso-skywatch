@@ -10,7 +10,8 @@
 | Revised | 2026-11-01 — AC-F1.9 fix: `SessionKey` must be hex of 32/48/64 characters; the first local `login` failed with a base64 key; AC-F1.3 fix: the run mode supplies `PhoneNumber` on resume, the first local run treated a valid session as rejected (owner approved) |
 | Revised | 2026-11-01 — AC-F8.2 format: the disclaimer moves under the original text; the tag line is `🏷 КП` instead of pattern names and ends with `⚠️ Увага` so push previews still warn (owner request) |
 | Revised | 2026-11-01 — AC-F8.14 added: mentions are shown in bold via message entities (owner request) |
-| Phases | P0, P1a, P1b, P2, P3a, P3b, P4a, P4b, P5, P6a, P6b, P7, P8 (13 phases, one Claude session each) |
+| Revised | 2026-11-01 — P9 added: follow-ups, replies to notified posts (F13, D15; owner request after the first live night) |
+| Phases | P0, P1a, P1b, P2, P3a, P3b, P4a, P4b, P5, P6a, P6b, P7, P8, P9 (14 phases, one Claude session each) |
 
 ---
 
@@ -482,6 +483,30 @@ Added 2026-10-30 at the owner's request after a security review and a Telegram-p
 - Callback listener: 429 waits `retry_after`; sender: a 429 on `AnswerCallbackAsync` leaves the gate open.
 
 **Files:** `Telegram/SessionFiles.cs`, `Telegram/TelegramRetry.cs`, `Telegram/WTelegramUpdateSource.cs`, `Telegram/ITelegramUpdateSource.cs`, `Telegram/LoginCommand.cs`, `Telegram/BotNotificationSender.cs`, `Telegram/BotCallbackListener.cs`, `Options/TelegramOptions.cs`, `Hosting/ProcessingService.cs`, `Pipeline/LabelService.cs`, `Program.cs`, `.dockerignore`, `deploy/*`, `docs/spec.md`, tests.
+
+### P9 — Follow-ups (replies to notified posts)
+
+Added 2026-11-01 at the owner's request after the first live night: a source posts "Реактивний БПЛА на Краснопавлівку", then replies to it "Не фіксується"; the channel showed only the first post. Owner decision (D15): relaying the source's own reply verbatim is within C1; no parsing of directions.
+
+**Scope**
+- `TlMapper` maps `reply_to` (same chat only) to `IncomingMessage.ReplyToMessageId`.
+- `Message.ReplyToTelegramMessageId`, `Message.FollowUpOfMessageId` (FK to `Messages`, set null on delete); migration `AddFollowUps`.
+- `MessageProcessor`: an unmatched reply to a message with a `Sent` alert, within the window and under the per-post limit, gets a `FollowUp` notification in the same transaction; the root of a reply to a follow-up is that follow-up's original (AC-F13.1, F13.2, F13.5).
+- `NotificationDispatchService`: `FollowUp` goes out as a reply to the original alert, without label buttons; staleness from its own publication (AC-F13.3, F13.4). `NotificationFormatter`: follow-up first line.
+- `MonitoringOptions`: `FollowUpsEnabled`, `FollowUpWindowMinutes`, `FollowUpMaxPerMessage` with validation (AC-F13.6).
+- `DailyReportBuilder` leaves follow-ups out (AC-F13.7).
+
+**Out of scope:** replies from another chat (comments, cross-channel replies); interpreting the reply; label buttons on follow-ups; follow-ups of edits that newly match.
+
+**Acceptance criteria:** AC-F13.1–F13.7.
+
+**Tests-first list**
+- Mapper: a reply in the same chat carries the replied-to id; a reply to another peer does not.
+- Processor: unmatched reply to a sent alert → `FollowUp` Pending with text stored; to an unsent / unknown / out-of-window message → plain unmatched; the sixth follow-up → no notification; a reply to a follow-up → same original; a matching reply → normal `New`; feature off → plain unmatched.
+- Dispatcher: a follow-up is a reply to the original's bot message, no label buttons, follow-up first line; stale from its own time.
+- Report: follow-ups are not counted.
+
+**Files:** `Telegram/TlMapper.cs`, `Telegram/ITelegramUpdateSource.cs`, `Persistence/Entities/Message.cs`, `Persistence/Entities/Notification.cs`, `Persistence/SkywatchDbContext.cs`, `Persistence/Migrations/*`, `Pipeline/MessageProcessor.cs`, `Pipeline/DailyReportBuilder.cs`, `Hosting/NotificationDispatchService.cs`, `Options/MonitoringOptions.cs`, `Core/Formatting/NotificationFormatter.cs`, `appsettings.json`, `docs/spec.md`, tests.
 
 ## 5. New dependencies and infrastructure
 

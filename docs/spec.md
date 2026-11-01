@@ -21,7 +21,7 @@ The MVP exists to **measure**: filter precision, match volume, duplicate frequen
 
 These are non-negotiable. Violating one is a defect regardless of what a phase says.
 
-- **C1** — The system detects *mentions* of configured names. It MUST NOT infer coordinates, predict flight paths, track military activity or air-defence positions, or map movement reports.
+- **C1** — The system detects *mentions* of configured names. It MUST NOT infer coordinates, predict flight paths, track military activity or air-defence positions, or map movement reports. Relaying a source's own reply to a post that was notified, verbatim and without interpretation (F13), is not movement mapping (D15).
 - **C2** — Notifications go only to the single configured private test group. There is no public target in this release.
 - **C3** — Every match notification carries a disclaimer that the content is unverified third-party information and is not a substitute for official air-raid alerts.
 - **C4** — No secrets or identifying configuration in git: API id/hash, phone, 2FA password, bot token, chat ids, source list, labeler user ids, session file, database.
@@ -215,6 +215,18 @@ A hosted service runs hourly.
 - **AC-F12.3** — `Messages`, `Notifications` and `ServiceEvents` rows older than `Storage:MetadataRetentionDays` (default 30) are deleted.
 - **AC-F12.4** — Age for retention is measured from `ReceivedAtUtc` (or `OccurredAtUtc` for service events).
 
+### F13. Follow-ups (replies to notified posts)
+
+A source often continues a post with a reply ("не фіксується", "повернув на …"). Such a reply rarely names the village, so it does not match.
+
+- **AC-F13.1** — A new, unmatched message that is a direct reply (Telegram `reply_to`, same chat) to a stored message of the same source whose alert (`New` or `EditNewMatch`) was `Sent` is a **follow-up** of that message, when it is published within `Monitoring:FollowUpWindowMinutes` (default 120) of the original. A reply to a follow-up belongs to the same original. It gets a `FollowUp` notification, `Pending`, in the same transaction as its row; its text is stored regardless of `Storage:StoreUnmatchedText`.
+- **AC-F13.2** — At most `Monitoring:FollowUpMaxPerMessage` (default 5) follow-ups are notified per original; later ones are stored and logged at `Information` without a notification.
+- **AC-F13.3** — A follow-up is sent as a reply to the original alert's bot message, without label buttons. Format: first line `↪️ Продовження · ⚠️ Увага`, then the text verbatim (with F8.14 bold, if it mentions the village), the disclaimer and the F8.2 footer. Nothing in the text is interpreted (C1).
+- **AC-F13.4** — Staleness (F7) is measured from the follow-up's own publication time.
+- **AC-F13.5** — A reply that matches a pattern itself is a normal match (F6), not a follow-up.
+- **AC-F13.6** — `Monitoring:FollowUpsEnabled` (default `true`) turns the feature off; then replies are handled as before.
+- **AC-F13.7** — Follow-ups are not counted in the daily report's match, label or latency figures.
+
 ---
 
 ## 6. Configuration reference
@@ -243,6 +255,9 @@ Committed `appsettings.json` contains only non-identifying defaults. Identifying
     "ContentDuplicateAcrossSourcesOnly": true,
     "EditHandling": "NotifyOnNewMatch",
     "EditDebounceSeconds": 15,
+    "FollowUpsEnabled": true,               // F13
+    "FollowUpWindowMinutes": 120,
+    "FollowUpMaxPerMessage": 5,
     "Patterns": [ /* defaults from F5 */ ],
     "Sources": []               // identifying — not committed
   },
@@ -279,7 +294,7 @@ All timestamps are UTC `DateTime` stored with a converter that guarantees `DateT
 
 **Sources** — `Id`, `TelegramChatId` (unique), `Name`, `Type` (Channel/Supergroup/Group), `Username?`, `NoForwards`, `IsEnabled`, `CreatedAtUtc`.
 
-**Messages** — `Id`, `SourceId`, `TelegramMessageId`, `Text?`, `PublishedAtUtc`, `ReceivedAtUtc`, `EditedAtUtc?`, `ContentHash`, `OriginChatId`, `OriginMessageId`, `IsMatched`, `MatchedPatterns?` (comma-separated names), `IsDuplicate`, `DuplicateOfMessageId?`, `DuplicateReason?` (Forward/SameText).
+**Messages** — `Id`, `SourceId`, `TelegramMessageId`, `Text?`, `PublishedAtUtc`, `ReceivedAtUtc`, `EditedAtUtc?`, `ContentHash`, `OriginChatId`, `OriginMessageId`, `IsMatched`, `MatchedPatterns?` (comma-separated names), `IsDuplicate`, `DuplicateOfMessageId?`, `DuplicateReason?` (Forward/SameText), `ReplyToTelegramMessageId?`, `FollowUpOfMessageId?` (F13).
 Indexes: unique `(SourceId, TelegramMessageId)`; `(ContentHash, ReceivedAtUtc)`; `(OriginChatId, OriginMessageId, ReceivedAtUtc)`; `ReceivedAtUtc`.
 
 **Notifications** — `Id`, `MessageId`, `Kind` (New/EditNewMatch/EditReply), `Status` (Pending/Sent/SkippedStale/SkippedDuplicate/Failed), `Attempts`, `CreatedAtUtc`, `SentAtUtc?`, `BotMessageId?`, `Error?`, `PossibleDuplicate`, `StaleReportedAtUtc?`, `Label?` (Useful/False/Duplicate), `LabeledByUserId?`, `LabeledAtUtc?`.
@@ -332,3 +347,4 @@ Web dashboard; mobile app; HTTP API; LLM classification; OCR; voice transcriptio
 | D12 | Projects `Skywatch.Core`, `Skywatch.Worker`, `Skywatch.Core.Tests`, `Skywatch.Worker.Tests`; solution `Skywatch.slnx`; `Dockerfile` at repo root. |
 | D13 | Only two abstractions over Telegram: `ITelegramUpdateSource`, `INotificationSender`; bounded `Channel<IncomingMessage>(1000)`. |
 | D14 | Personal account for local development; separate warmed-up account for the VPS experiment. Run modes `login` and `list-chats`. |
+| D15 | 2026-11-01, owner: follow-ups (F13) relay a source's own direct reply to a notified post, verbatim, within a time window and a per-post limit. No parsing of directions or targets, so C1 holds. |

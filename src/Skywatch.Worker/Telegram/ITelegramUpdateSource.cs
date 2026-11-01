@@ -20,7 +20,10 @@ internal interface ITelegramUpdateSource
 
 internal abstract record SourceEvent;
 
-/// <summary>A new or edited message from an enabled source (spec F3). <see cref="Text"/> is the text or the media caption.</summary>
+/// <summary>
+/// A new or edited message from an enabled source (spec F3). <see cref="Text"/> is the text or the media caption;
+/// <see cref="ReplyToMessageId"/> is the message it replies to in the same chat (F13).
+/// </summary>
 internal sealed record IncomingMessage(
     long ChatId,
     int MessageId,
@@ -29,7 +32,8 @@ internal sealed record IncomingMessage(
     DateTime ReceivedAtUtc,
     OriginKey Origin,
     bool IsEdit,
-    DateTime? EditedAtUtc) : SourceEvent;
+    DateTime? EditedAtUtc,
+    int? ReplyToMessageId = null) : SourceEvent;
 
 internal enum ConnectionState
 {

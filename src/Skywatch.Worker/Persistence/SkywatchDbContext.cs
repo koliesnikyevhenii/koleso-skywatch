@@ -41,6 +41,7 @@ internal sealed class SkywatchDbContext(DbContextOptions<SkywatchDbContext> opti
 
             // Database-level actions, because retention deletes with ExecuteDelete, which bypasses the change tracker.
             message.HasOne(m => m.DuplicateOf).WithMany().HasForeignKey(m => m.DuplicateOfMessageId).OnDelete(DeleteBehavior.SetNull);
+            message.HasOne(m => m.FollowUpOf).WithMany().HasForeignKey(m => m.FollowUpOfMessageId).OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<Notification>()

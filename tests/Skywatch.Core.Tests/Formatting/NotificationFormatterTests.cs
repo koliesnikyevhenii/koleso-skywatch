@@ -207,4 +207,24 @@ public class NotificationFormatterTests
     [Fact]
     public void AC_F8_14_without_highlights_there_is_no_bold() =>
         NotificationFormatter.Render(Content(), _summerUtc.AddSeconds(2), _kyiv).Bold.ShouldBeEmpty();
+
+    // AC-F13.3: a follow-up starts with its own marker and keeps the disclaimer and the footer.
+    [Fact]
+    public void AC_F13_3_follow_up_has_the_follow_up_first_line_and_the_disclaimer()
+    {
+        var content = new NotificationContent([], "Не фіксується", "Test channel", _summerUtc, null, "https://t.me/test_channel/43", IsFollowUp: true);
+
+        Format(content).ShouldBe(
+            """
+            ↪️ Продовження · ⚠️ Увага
+
+            Не фіксується
+
+            ℹ️ Неперевірене повідомлення з каналу третьої сторони. Не замінює офіційні сигнали тривоги.
+            ──────────
+            📢 Test channel
+            🕐 12:15:30 (опубл.) · затримка 2 с
+            🔗 https://t.me/test_channel/43
+            """.ReplaceLineEndings("\n"));
+    }
 }
