@@ -35,7 +35,7 @@ public sealed class LabelServiceTests : IDisposable
         _labels = new LabelService(
             _db,
             _sender,
-            Microsoft.Extensions.Options.Options.Create(new NotificationOptions { Enabled = true, TargetChatId = _targetChatId, LabelerUserIds = [_labeler, _otherLabeler] }),
+            Microsoft.Extensions.Options.Options.Create(new NotificationOptions { Enabled = true, TargetChatId = _targetChatId, LabelingOpenToAll = false, LabelerUserIds = [_labeler, _otherLabeler] }),
             _time,
             _loggerFactory.CreateLogger<LabelService>());
         _notificationId = AddNotification(NotificationKind.New);
@@ -195,6 +195,63 @@ public sealed class LabelServiceTests : IDisposable
         _logs.Entries.ShouldContain(e => e.Level == LogLevel.Warning && e.Message.Contains(_stranger.ToString(System.Globalization.CultureInfo.InvariantCulture)));
     }
 
+    // AC-F10.10: with labeling open to all, a press by a user outside LabelerUserIds labels like a labeler's.
+    [Fact]
+    public async Task AC_F10_10_open_labeling_lets_any_user_in_the_target_chat_label()
+    {
+        var labels = new LabelService(
+            _db,
+            _sender,
+            Microsoft.Extensions.Options.Options.Create(new NotificationOptions { Enabled = true, TargetChatId = _targetChatId, LabelingOpenToAll = true }),
+            _time,
+            _loggerFactory.CreateLogger<LabelService>());
+
+        (await labels.HandleAsync(Press(Data(NotificationLabel.Useful), _stranger), Ct)).ShouldBe(LabelOutcome.Labeled);
+
+        var row = await RowAsync(_notificationId);
+        (row.Label, row.LabeledByUserId).ShouldBe((NotificationLabel.Useful, _stranger));
+        _sender.Answers.ShouldHaveSingleItem().Text.ShouldBe(LabelService.SavedAnswer);
+    }
+
+    // AC-F10.11: with labeling off, a press on an older message changes nothing and is answered accordingly.
+    [Fact]
+    public async Task AC_F10_11_press_while_labeling_is_off_changes_nothing()
+    {
+        var labels = new LabelService(
+            _db,
+            _sender,
+            Microsoft.Extensions.Options.Options.Create(new NotificationOptions { Enabled = true, TargetChatId = _targetChatId, LabelingEnabled = false }),
+            _time,
+            _loggerFactory.CreateLogger<LabelService>());
+
+        (await labels.HandleAsync(Press(Data(NotificationLabel.Useful)), Ct)).ShouldBe(LabelOutcome.Disabled);
+
+        await NothingStoredAsync();
+        _sender.Answers.ShouldHaveSingleItem().Text.ShouldBe(LabelService.DisabledAnswer);
+        _sender.Markups.ShouldBeEmpty();
+    }
+
+    // AC-F10.10: labeling is open to everyone in the target chat unless configured otherwise.
+    [Fact]
+    public void AC_F10_10_labeling_is_open_to_all_by_default() =>
+        new NotificationOptions().LabelingOpenToAll.ShouldBeTrue();
+
+    // AC-F10.10: open labeling still ignores presses from other chats.
+    [Fact]
+    public async Task AC_F10_10_open_labeling_still_ignores_foreign_chats()
+    {
+        var labels = new LabelService(
+            _db,
+            _sender,
+            Microsoft.Extensions.Options.Options.Create(new NotificationOptions { Enabled = true, TargetChatId = _targetChatId, LabelingOpenToAll = true }),
+            _time,
+            _loggerFactory.CreateLogger<LabelService>());
+
+        (await labels.HandleAsync(Press(Data(NotificationLabel.Useful), _stranger, chatId: _foreignChatId), Ct)).ShouldBe(LabelOutcome.Unauthorized);
+
+        await NothingStoredAsync();
+    }
+
     // AC-F10.4: a non-labeler with malformed data still gets "Немає прав", not a hint about the data format.
     [Fact]
     public async Task AC_F10_4_non_labeler_with_malformed_data_answers_no_rights()
@@ -308,7 +365,7 @@ public sealed class LabelServiceTests : IDisposable
         var labels = new LabelService(
             new ThrowingDbFactory(),
             _sender,
-            Microsoft.Extensions.Options.Options.Create(new NotificationOptions { Enabled = true, TargetChatId = _targetChatId, LabelerUserIds = [_labeler] }),
+            Microsoft.Extensions.Options.Options.Create(new NotificationOptions { Enabled = true, TargetChatId = _targetChatId, LabelingOpenToAll = false, LabelerUserIds = [_labeler] }),
             _time,
             _loggerFactory.CreateLogger<LabelService>());
 

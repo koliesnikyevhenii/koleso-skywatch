@@ -48,13 +48,13 @@ public sealed class NotificationDispatchServiceTests : IDisposable
 
     private DateTime Now => _time.GetUtcNow().UtcDateTime;
 
-    private NotificationDispatchService Dispatcher() =>
+    private NotificationDispatchService Dispatcher(bool labeling = true) =>
         new(
             _db,
             _sender,
             new KeywordFilter([new PatternDefinition("Settlement", @"\bкраснопавлівк\w*", CaseSensitive: false, Enabled: true)]),
             _signal,
-            Microsoft.Extensions.Options.Options.Create(new NotificationOptions { Enabled = true }),
+            Microsoft.Extensions.Options.Options.Create(new NotificationOptions { Enabled = true, LabelingEnabled = labeling }),
             _kyiv,
             _time,
             _loggerFactory.CreateLogger<NotificationDispatchService>());
@@ -95,9 +95,9 @@ public sealed class NotificationDispatchServiceTests : IDisposable
         await db.Notifications.Where(n => n.Id == id).ExecuteUpdateAsync(s => s.SetProperty(n => n.Status, status), Ct);
     }
 
-    private async Task<NotificationDispatchService> StartAsync()
+    private async Task<NotificationDispatchService> StartAsync(bool labeling = true)
     {
-        var dispatcher = Dispatcher();
+        var dispatcher = Dispatcher(labeling);
         await dispatcher.StartAsync(Ct);
         return dispatcher;
     }
@@ -133,6 +133,19 @@ public sealed class NotificationDispatchServiceTests : IDisposable
             new NotificationContent(["Settlement"], "Шахед на Краснопавлівку", _sourceName, Now.AddSeconds(-4), null, "https://t.me/test_channel/1"),
             Now,
             _kyiv));
+        await dispatcher.StopAsync(Ct);
+    }
+
+    // AC-F10.11: with labeling off, alerts go out without label buttons.
+    [Fact]
+    public async Task AC_F10_11_alert_has_no_label_buttons_while_labeling_is_off()
+    {
+        var id = await PendingAsync();
+        using var dispatcher = await StartAsync(labeling: false);
+
+        await NotPendingAsync(id);
+
+        _sender.Sends.ShouldHaveSingleItem().Notification.LabelNotificationId.ShouldBeNull();
         await dispatcher.StopAsync(Ct);
     }
 

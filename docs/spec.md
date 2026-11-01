@@ -191,12 +191,14 @@ Default patterns:
 - **AC-F10.1** — Every sent match notification (not summaries or reports) carries inline buttons `✅ Корисно`, `❌ Хибне`, `🔁 Дубль`.
 - **AC-F10.2** — A press by a user in `Notifications:LabelerUserIds` stores `Label`, `LabeledByUserId`, `LabeledAtUtc` on the notification, answers the callback, and edits the buttons to mark the chosen one with `✔`.
 - **AC-F10.3** — Pressing a different button overwrites the label; the latest label wins.
-- **AC-F10.4** — A press by any other user changes nothing and answers the callback with `Немає прав`.
+- **AC-F10.4** — With `LabelingOpenToAll = false`, a press by any other user changes nothing and answers the callback with `Немає прав`.
 - **AC-F10.5** — Callback data is `lbl:{notificationId}:{u|f|d}`. Malformed data or an unknown notification id is answered and logged at `Warning`, without throwing.
 - **AC-F10.6** — Bot callbacks are received via long polling in a hosted service in the same Worker process.
 - **AC-F10.7** — A press counts only when the notification was `Sent` as the very message that was pressed (`BotMessageId`); otherwise it is answered `Сповіщення не знайдено` and nothing changes.
 - **AC-F10.8** — If storing a press fails, the press is still answered (`Помилка, спробуйте ще раз`) and the error is logged.
 - **AC-F10.9** — A 429 on `getUpdates` waits `retry_after` (at least the backoff). A 429 on answering a press does not hold back match notifications.
+- **AC-F10.10** — With `Notifications:LabelingOpenToAll = true` (the default; owner decision 2026-11-01) a press by any user in the target chat labels as a labeler would (F10.2, F10.3: the latest press wins); `LabelerUserIds` is then not needed. Presses from other chats are still ignored.
+- **AC-F10.11** — `Notifications:LabelingEnabled` (default `true`). When `false`, alerts are sent without label buttons and a press on an older message changes nothing and is answered `Позначки вимкнено`.
 
 ### F11. Daily report and metrics
 
@@ -266,6 +268,8 @@ Committed `appsettings.json` contains only non-identifying defaults. Identifying
     "BotToken": "",             // secret
     "TargetChatId": 0,          // identifying
     "LabelerUserIds": [],       // identifying
+    "LabelingEnabled": true,    // AC-F10.11
+    "LabelingOpenToAll": true,  // AC-F10.10; false = only LabelerUserIds
     "MaxMessageAgeSeconds": 120,
     "MaxSendAttempts": 3,
     "DisplayTimeZone": "Europe/Kyiv"

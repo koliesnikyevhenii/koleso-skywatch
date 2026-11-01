@@ -21,6 +21,15 @@ internal sealed class NotificationOptions
     /// <summary>AC-F10.2/F10.4: the Telegram user ids allowed to label. Identifying: never committed.</summary>
     public long[] LabelerUserIds { get; set; } = [];
 
+    /// <summary>AC-F10.11: label buttons on alerts and the handling of presses; on by default.</summary>
+    public bool LabelingEnabled { get; set; } = true;
+
+    /// <summary>AC-F10.10: when <see langword="true"/> (the default), anyone pressing in the target chat may label.</summary>
+    public bool LabelingOpenToAll { get; set; } = true;
+
+    /// <summary>AC-F10.2/F10.4/F10.10: whether a press by <paramref name="userId"/> may label.</summary>
+    internal bool CanLabel(long userId) => LabelingOpenToAll || LabelerUserIds.Contains(userId);
+
     /// <summary>AC-F7.2: a message older than this is never sent.</summary>
     public int MaxMessageAgeSeconds { get; set; } = 120;
 

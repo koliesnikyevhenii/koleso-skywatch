@@ -173,7 +173,8 @@ internal sealed partial class NotificationDispatchService(
         }
         else
         {
-            result = await sender.SendAsync(outgoing with { LabelNotificationId = notification.Id }, ct); // AC-F10.1
+            // AC-F10.1; AC-F10.11: no buttons while labeling is off.
+            result = await sender.SendAsync(outgoing with { LabelNotificationId = options.Value.LabelingEnabled ? notification.Id : null }, ct);
         }
 
         var wait = Apply(notification, result, now);

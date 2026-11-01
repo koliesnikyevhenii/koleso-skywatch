@@ -11,6 +11,8 @@
 | Revised | 2026-11-01 — AC-F8.2 format: the disclaimer moves under the original text; the tag line is `🏷 КП` instead of pattern names and ends with `⚠️ Увага` so push previews still warn (owner request) |
 | Revised | 2026-11-01 — AC-F8.14 added: mentions are shown in bold via message entities (owner request) |
 | Revised | 2026-11-01 — P9 added: follow-ups, replies to notified posts (F13, D15; owner request after the first live night) |
+| Revised | 2026-11-01 — AC-F10.10 added: `Notifications:LabelingOpenToAll` lets every member of the target chat label, on by default (owner request) |
+| Revised | 2026-11-01 — AC-F10.11 added: `Notifications:LabelingEnabled` turns the label buttons on and off (owner request) |
 | Phases | P0, P1a, P1b, P2, P3a, P3b, P4a, P4b, P5, P6a, P6b, P7, P8, P9 (14 phases, one Claude session each) |
 
 ---
