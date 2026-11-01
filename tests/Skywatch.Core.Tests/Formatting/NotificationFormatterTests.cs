@@ -1,4 +1,5 @@
 using System.Text;
+using Skywatch.Core.Filtering;
 using Skywatch.Core.Formatting;
 
 namespace Skywatch.Core.Tests.Formatting;
@@ -171,4 +172,39 @@ public class NotificationFormatterTests
         formatted.Split('\n')[0].ShouldEndWith(NotificationFormatter.Warning);
         formatted.ShouldContain("Шахед курсом на Краснопавлівку\n\n" + NotificationFormatter.Disclaimer + "\n──────────\n");
     }
+
+    // AC-F8.14: highlights of the original text become bold spans of the message, moved past the first line.
+    [Fact]
+    public void AC_F8_14_highlight_is_a_bold_span_on_the_same_word_in_the_message()
+    {
+        const string text = "Шахед курсом на Краснопавлівку";
+        var content = Content(text: text) with { Highlights = [new(text.IndexOf("Краснопавлівку", StringComparison.Ordinal), "Краснопавлівку".Length)] };
+
+        var rendered = NotificationFormatter.Render(content, _summerUtc.AddSeconds(2), _kyiv);
+
+        var bold = rendered.Bold.ShouldHaveSingleItem();
+        rendered.Text.Substring(bold.Start, bold.Length).ShouldBe("Краснопавлівку");
+        rendered.Text.ShouldBe(Format(content));
+    }
+
+    // AC-F8.14 + AC-F8.4: a highlight is cut where the text is truncated; one past the cut is dropped.
+    [Fact]
+    public void AC_F8_14_highlights_are_cut_at_the_truncation_point()
+    {
+        var available = NotificationFormatter.MaxLength - Format(Content(text: "")).Length;
+        var keep = available - 1; // the cut keeps available − 1 chars, then appends "…"
+        var text = new string('а', keep - 3) + "Краснопавлівку" + new string('б', 100) + "Краснопавлівку";
+        var content = Content(text: text) with { Highlights = [new(keep - 3, 14), new(keep + 111, 14)] };
+
+        var rendered = NotificationFormatter.Render(content, _summerUtc.AddSeconds(2), _kyiv);
+
+        var bold = rendered.Bold.ShouldHaveSingleItem();
+        rendered.Text.Substring(bold.Start, bold.Length).ShouldBe("Кра");
+        rendered.Text.Length.ShouldBe(NotificationFormatter.MaxLength);
+    }
+
+    // AC-F8.14: no highlights, no bold spans.
+    [Fact]
+    public void AC_F8_14_without_highlights_there_is_no_bold() =>
+        NotificationFormatter.Render(Content(), _summerUtc.AddSeconds(2), _kyiv).Bold.ShouldBeEmpty();
 }

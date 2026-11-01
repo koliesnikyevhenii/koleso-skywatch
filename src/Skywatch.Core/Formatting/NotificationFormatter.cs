@@ -1,16 +1,24 @@
 using System.Globalization;
 using System.Text;
+using Skywatch.Core.Filtering;
 
 namespace Skywatch.Core.Formatting;
 
-/// <summary>What one match notification shows. <see cref="EditedAtUtc"/> is set for edit-triggered notifications.</summary>
+/// <summary>
+/// What one match notification shows. <see cref="EditedAtUtc"/> is set for edit-triggered notifications;
+/// <see cref="Highlights"/> are spans of <see cref="Text"/> to show in bold (AC-F8.14).
+/// </summary>
 public sealed record NotificationContent(
     IReadOnlyList<string> PatternNames,
     string Text,
     string SourceName,
     DateTime PublishedAtUtc,
     DateTime? EditedAtUtc,
-    string? Link);
+    string? Link,
+    IReadOnlyList<TextSpan>? Highlights = null);
+
+/// <summary>The message text and the spans of it to send as bold entities (AC-F8.14).</summary>
+public sealed record FormattedNotification(string Text, IReadOnlyList<TextSpan> Bold);
 
 /// <summary>AC-F8.2: the plain-text match message (no parse mode). Strings are Ukrainian.</summary>
 public static class NotificationFormatter
@@ -31,7 +39,14 @@ public static class NotificationFormatter
 
     /// <param name="sendAttemptAtUtc">AC-F8.5: the delay is measured to this send attempt.</param>
     /// <param name="displayZone">AC-F8.12: the published time is shown in this zone, honouring DST.</param>
-    public static string Format(NotificationContent content, DateTime sendAttemptAtUtc, TimeZoneInfo displayZone)
+    public static string Format(NotificationContent content, DateTime sendAttemptAtUtc, TimeZoneInfo displayZone) =>
+        Render(content, sendAttemptAtUtc, displayZone).Text;
+
+    /// <summary>
+    /// <see cref="Format"/> plus the bold spans: the highlights moved past the header and cut where the text is
+    /// truncated (AC-F8.4, AC-F8.14).
+    /// </summary>
+    public static FormattedNotification Render(NotificationContent content, DateTime sendAttemptAtUtc, TimeZoneInfo displayZone)
     {
         var header = $"{TagLine(content)}\n\n";
 
@@ -46,7 +61,19 @@ public static class NotificationFormatter
         }
 
         var tail = footer.ToString();
-        return header + Truncate(content.Text, MaxLength - header.Length - tail.Length) + tail;
+        var (body, kept) = Truncate(content.Text, MaxLength - header.Length - tail.Length);
+
+        List<TextSpan> bold = [];
+        foreach (var span in content.Highlights ?? [])
+        {
+            var end = Math.Min(span.End, kept);
+            if (span.Start >= 0 && end > span.Start)
+            {
+                bold.Add(new TextSpan(header.Length + span.Start, end - span.Start));
+            }
+        }
+
+        return new FormattedNotification(header + body + tail, bold);
     }
 
     /// <summary>
@@ -76,11 +103,12 @@ public static class NotificationFormatter
         (long)Math.Round((sendAttemptAtUtc - (content.EditedAtUtc ?? content.PublishedAtUtc)).TotalSeconds, MidpointRounding.AwayFromZero);
 
     /// <summary>AC-F8.4: only the original text is cut, never between the halves of a surrogate pair.</summary>
-    private static string Truncate(string text, int available)
+    /// <returns>The text to show and how many characters of the original it keeps.</returns>
+    private static (string Text, int Kept) Truncate(string text, int available)
     {
         if (text.Length <= available)
         {
-            return text;
+            return (text, text.Length);
         }
 
         var keep = Math.Max(available - _ellipsis.Length, 0);
@@ -89,6 +117,6 @@ public static class NotificationFormatter
             keep--;
         }
 
-        return string.Concat(text.AsSpan(0, keep), _ellipsis);
+        return (string.Concat(text.AsSpan(0, keep), _ellipsis), keep);
     }
 }

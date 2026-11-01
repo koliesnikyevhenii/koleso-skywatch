@@ -1,5 +1,6 @@
 using System.Net;
 using Microsoft.Extensions.Time.Testing;
+using Skywatch.Core.Filtering;
 using Skywatch.Worker.Options;
 using Skywatch.Worker.Persistence.Entities;
 using Skywatch.Worker.Telegram;
@@ -52,6 +53,18 @@ public sealed class BotNotificationSenderTests : IDisposable
         request.ParseMode.ShouldBe(ParseMode.None);
         request.ReplyParameters.ShouldBeNull();
         result.ShouldBeOfType<SendResult.Success>().BotMessageId.ShouldBe(101);
+    }
+
+    // AC-F8.14: bold spans go out as bold entities with the same UTF-16 offsets, still without a parse mode.
+    [Fact]
+    public async Task AC_F8_14_bold_spans_are_sent_as_bold_entities()
+    {
+        await SendAsync(Alert("🚀 на Краснопавлівку") with { Bold = [new TextSpan(6, 14)] });
+
+        var request = _bot.Requests.ShouldHaveSingleItem();
+        request.ParseMode.ShouldBe(ParseMode.None);
+        var entity = request.Entities.ShouldNotBeNull().ShouldHaveSingleItem();
+        (entity.Type, entity.Offset, entity.Length).ShouldBe((MessageEntityType.Bold, 6, 14));
     }
 
     [Fact]

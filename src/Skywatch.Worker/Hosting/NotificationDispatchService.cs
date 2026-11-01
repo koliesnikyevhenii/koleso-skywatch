@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Skywatch.Core.Filtering;
 using Skywatch.Core.Formatting;
 using Skywatch.Core.Time;
 using Skywatch.Worker.Options;
@@ -35,6 +36,7 @@ internal sealed class DispatchSignal
 internal sealed partial class NotificationDispatchService(
     IDbContextFactory<SkywatchDbContext> dbFactory,
     INotificationSender sender,
+    KeywordFilter filter,
     DispatchSignal signal,
     IOptions<NotificationOptions> options,
     TimeZoneInfo displayZone,
@@ -140,8 +142,10 @@ internal sealed partial class NotificationDispatchService(
             message.Source!.Name,
             message.PublishedAtUtc,
             editedAt,
-            SourceLinkBuilder.Build(message.Source.TelegramChatId, message.Source.Username, message.TelegramMessageId));
-        var outgoing = new OutgoingNotification(NotificationFormatter.Format(content, now, displayZone), SendPriority.Alert);
+            SourceLinkBuilder.Build(message.Source.TelegramChatId, message.Source.Username, message.TelegramMessageId),
+            filter.Highlights(message.Text));
+        var formatted = NotificationFormatter.Render(content, now, displayZone);
+        var outgoing = new OutgoingNotification(formatted.Text, SendPriority.Alert, Bold: formatted.Bold);
 
         SendResult result;
         if (notification.Kind == NotificationKind.EditReply)

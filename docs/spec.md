@@ -173,6 +173,7 @@ Default patterns:
 - **AC-F8.11** — At startup all `Pending` notifications are re-queued in creation order, after the staleness check.
 - **AC-F8.12** — Times are shown in `Notifications:DisplayTimeZone` (default `Europe/Kyiv`), honouring DST.
 - **AC-F8.13** — `protected-content` (`noforwards`) sources get the same full-text format as others (decision D4).
+- **AC-F8.14** — Every place an enabled pattern matches the original text is shown in bold (overlaps merged). Bold goes out as message entities (UTF-16 offsets), never through a parse mode, so the text of a post cannot break the message. A highlight is cut where the text is truncated (F8.4); a mention that matches only after normalization (e.g. split by an invisible character) is sent without bold.
 
 ### F9. Edited messages
 

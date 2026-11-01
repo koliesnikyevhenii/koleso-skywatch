@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Skywatch.Core.Filtering;
 using Skywatch.Core.Formatting;
 using Skywatch.Worker.Hosting;
 using Skywatch.Worker.Options;
@@ -51,6 +52,7 @@ public sealed class NotificationDispatchServiceTests : IDisposable
         new(
             _db,
             _sender,
+            new KeywordFilter([new PatternDefinition("Settlement", @"\bкраснопавлівк\w*", CaseSensitive: false, Enabled: true)]),
             _signal,
             Microsoft.Extensions.Options.Options.Create(new NotificationOptions { Enabled = true }),
             _kyiv,
@@ -131,6 +133,21 @@ public sealed class NotificationDispatchServiceTests : IDisposable
             new NotificationContent(["Settlement"], "Шахед на Краснопавлівку", _sourceName, Now.AddSeconds(-4), null, "https://t.me/test_channel/1"),
             Now,
             _kyiv));
+        await dispatcher.StopAsync(Ct);
+    }
+
+    // AC-F8.14: the mention in the sent text is marked bold.
+    [Fact]
+    public async Task AC_F8_14_mention_is_sent_in_bold()
+    {
+        var id = await PendingAsync("Шахед на Краснопавлівку", ageSeconds: 4);
+        using var dispatcher = await StartAsync();
+
+        await NotPendingAsync(id);
+
+        var sent = _sender.Sends.ShouldHaveSingleItem().Notification;
+        var bold = sent.Bold.ShouldNotBeNull().ShouldHaveSingleItem();
+        sent.Text.Substring(bold.Start, bold.Length).ShouldBe("Краснопавлівку");
         await dispatcher.StopAsync(Ct);
     }
 

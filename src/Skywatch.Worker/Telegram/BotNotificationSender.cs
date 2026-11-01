@@ -1,10 +1,12 @@
 using Microsoft.Extensions.Options;
+using Skywatch.Core.Filtering;
 using Skywatch.Worker.Options;
 using Skywatch.Worker.Persistence.Entities;
 using Skywatch.Worker.Pipeline;
 using Telegram.Bot;
 using Telegram.Bot.Exceptions;
 using Telegram.Bot.Types;
+using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
 
 namespace Skywatch.Worker.Telegram;
@@ -65,6 +67,10 @@ internal sealed class BotNotificationSender(ITelegramBotClient bot, IOptions<Not
     internal static InlineKeyboardMarkup LabelKeyboard(long notificationId, NotificationLabel? chosen) =>
         new(LabelButtons.All.Select(l => InlineKeyboardButton.WithCallbackData(LabelButtons.Text(l, chosen), LabelButtons.Data(notificationId, l))).ToArray());
 
+    /// <summary>AC-F8.14: Telegram entity offsets count UTF-16 code units, the same as .NET string indices.</summary>
+    internal static MessageEntity[]? BoldEntities(IReadOnlyList<TextSpan>? bold) =>
+        bold is null or { Count: 0 } ? null : [.. bold.Select(s => new MessageEntity { Type = MessageEntityType.Bold, Offset = s.Start, Length = s.Length })];
+
     private async Task<SendResult> SendCoreAsync(OutgoingNotification notification, ReplyParameters? replyTo, CancellationToken ct)
     {
         using var lease = await _gate.EnterAsync(notification.Priority, ct);
@@ -72,7 +78,7 @@ internal sealed class BotNotificationSender(ITelegramBotClient bot, IOptions<Not
         return await CallAsync(
             async () =>
             {
-                var message = await bot.SendMessage(options.Value.TargetChatId, notification.Text, replyParameters: replyTo, replyMarkup: keyboard, cancellationToken: ct);
+                var message = await bot.SendMessage(options.Value.TargetChatId, notification.Text, replyParameters: replyTo, replyMarkup: keyboard, entities: BoldEntities(notification.Bold), cancellationToken: ct);
                 return new SendResult.Success(message.Id);
             },
             ct);

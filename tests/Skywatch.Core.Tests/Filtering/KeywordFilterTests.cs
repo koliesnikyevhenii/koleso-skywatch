@@ -164,4 +164,44 @@ public class KeywordFilterTests
         result.IsMatch.ShouldBeFalse();
         result.Hits.ShouldBeEmpty();
     }
+
+    // AC-F8.14: every mention in the original text is highlighted, sorted, with overlapping hits merged.
+    [Fact]
+    public void AC_F8_14_highlights_cover_every_mention_in_the_original_text()
+    {
+        const string text = "Шахед на Краснопавлівку. Повторно: на КП, Красноpавлівський район";
+
+        var spans = _filter.Value.Highlights(text);
+
+        spans.Select(s => text.Substring(s.Start, s.Length)).ShouldBe(["Краснопавлівку", "на КП"]);
+    }
+
+    // AC-F8.14: "на КП" (Abbreviation) and the full name may overlap with other patterns; one merged span is kept.
+    [Fact]
+    public void AC_F8_14_overlapping_hits_become_one_span()
+    {
+        var filter = new KeywordFilter(
+        [
+            new PatternDefinition("Long", @"\bкраснопавлівк\w*", CaseSensitive: false),
+            new PatternDefinition("Prefix", @"\bкраснопавл", CaseSensitive: false),
+        ]);
+
+        filter.Highlights("у Краснопавлівку летить").ShouldBe([new TextSpan(2, 14)]);
+    }
+
+    // AC-F8.14: a mention split by an invisible character matches after normalization but is not highlighted.
+    [Fact]
+    public void AC_F8_14_mention_hidden_by_an_invisible_character_is_not_highlighted()
+    {
+        const string text = "Шахед на Красно​павлівку";
+
+        _filter.Value.Match(TextNormalizer.Normalize(text)).IsMatch.ShouldBeTrue();
+        _filter.Value.Highlights(text).ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void AC_F8_14_empty_text_has_no_highlights(string? text) =>
+        _filter.Value.Highlights(text).ShouldBeEmpty();
 }
