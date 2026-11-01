@@ -8,6 +8,7 @@
 | Revised | 2026-10-27 — architect review applied (see §10) |
 | Revised | 2026-10-30 — P8 added after the security and Telegram-policy review (owner request) |
 | Revised | 2026-11-01 — AC-F1.9 fix: `SessionKey` must be hex of 32/48/64 characters; the first local `login` failed with a base64 key; AC-F1.3 fix: the run mode supplies `PhoneNumber` on resume, the first local run treated a valid session as rejected (owner approved) |
+| Revised | 2026-11-01 — AC-F8.2 format: the disclaimer moves under the original text; the tag line is `🏷 КП` instead of pattern names and ends with `⚠️ Увага` so push previews still warn (owner request) |
 | Phases | P0, P1a, P1b, P2, P3a, P3b, P4a, P4b, P5, P6a, P6b, P7, P8 (13 phases, one Claude session each) |
 
 ---

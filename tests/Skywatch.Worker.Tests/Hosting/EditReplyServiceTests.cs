@@ -151,7 +151,7 @@ public sealed class EditReplyServiceTests : IDisposable
         sent.Notification.Priority.ShouldBe(SendPriority.Alert);
         sent.Notification.LabelNotificationId.ShouldBeNull(); // AC-F10.1: the reply carries no buttons
         sent.Notification.Text.ShouldContain(_alert + " фінал");
-        sent.Notification.Text.ShouldContain("🏷 Settlement · ✏️ оновлено");
+        sent.Notification.Text.ShouldContain("🏷 КП · ✏️ оновлено · ⚠️ Увага");
         sent.Notification.Text.ShouldContain("затримка 15 с");
 
         _time.Advance(TimeSpan.FromMinutes(1));

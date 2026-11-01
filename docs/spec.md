@@ -149,14 +149,14 @@ Default patterns:
 ### F8. Notification delivery
 
 - **AC-F8.1** — A single consumer sends `Pending` notifications sequentially, in creation order.
-- **AC-F8.2** — Message format (plain text, no parse mode):
+- **AC-F8.2** — Message format (plain text, no parse mode; pattern names are not shown, they stay in the database and the daily report):
 
   ```text
-  ⚠️ Неперевірено · повідомлення з каналу третьої сторони. Не замінює офіційні сигнали тривоги.
-  🏷 {PatternNames, comma-separated}{ · ✏️ оновлено, if edit-triggered}
+  🏷 КП{ · ✏️ оновлено, if edit-triggered} · ⚠️ Увага
 
   {original text}
 
+  ℹ️ Неперевірене повідомлення з каналу третьої сторони. Не замінює офіційні сигнали тривоги.
   ──────────
   📢 {Source name}
   🕐 {published time HH:mm:ss, display time zone} (опубл.) · затримка {N} с

@@ -36,7 +36,7 @@ public class NotificationFormatterTests
     private static string Format(NotificationContent content, double delaySeconds = 2) =>
         NotificationFormatter.Format(content, (content.EditedAtUtc ?? content.PublishedAtUtc).AddSeconds(delaySeconds), _kyiv);
 
-    // AC-F8.2 + F8.3: exact output for a public channel, with every pattern name as a tag.
+    // AC-F8.2 + F8.3: exact output for a public channel; several patterns still show one tag.
     [Fact]
     public void AC_F8_2_public_channel_message_has_the_exact_format()
     {
@@ -44,11 +44,11 @@ public class NotificationFormatterTests
 
         Format(content).ShouldBe(
             """
-            ⚠️ Неперевірено · повідомлення з каналу третьої сторони. Не замінює офіційні сигнали тривоги.
-            🏷 Settlement, Abbreviation
+            🏷 КП · ⚠️ Увага
 
             Шахед курсом на Краснопавлівку
 
+            ℹ️ Неперевірене повідомлення з каналу третьої сторони. Не замінює офіційні сигнали тривоги.
             ──────────
             📢 Test channel
             🕐 12:15:30 (опубл.) · затримка 2 с
@@ -80,7 +80,7 @@ public class NotificationFormatterTests
 
         var formatted = Format(content, delaySeconds: 4);
 
-        formatted.ShouldContain("\n🏷 Settlement · ✏️ оновлено\n");
+        formatted.ShouldStartWith("🏷 КП · ✏️ оновлено · ⚠️ Увага\n");
         formatted.ShouldContain("🕐 12:15:30 (опубл.) · затримка 4 с");
     }
 
@@ -115,8 +115,8 @@ public class NotificationFormatterTests
         var formatted = Format(Content(text: new string('а', 5000)));
 
         formatted.Length.ShouldBe(NotificationFormatter.MaxLength);
-        formatted.ShouldStartWith(NotificationFormatter.Disclaimer + "\n🏷 Settlement\n\nааа");
-        formatted.ShouldContain("а…\n\n──────────\n📢 Test channel\n");
+        formatted.ShouldStartWith("🏷 КП · ⚠️ Увага\n\nааа");
+        formatted.ShouldContain("а…\n\n" + NotificationFormatter.Disclaimer + "\n──────────\n📢 Test channel\n");
         formatted.ShouldEndWith("\n🔗 https://t.me/test_channel/42");
     }
 
@@ -149,16 +149,26 @@ public class NotificationFormatterTests
 
         formatted.Length.ShouldBeLessThanOrEqualTo(NotificationFormatter.MaxLength);
         Should.NotThrow(() => new UTF8Encoding(false, throwOnInvalidBytes: true).GetBytes(formatted));
-        formatted.ShouldContain("…\n\n──────────\n");
+        formatted.ShouldContain("…\n\n" + NotificationFormatter.Disclaimer + "\n──────────\n");
     }
 
     // Plan P5 reply variant (AC-F9.5): the edit removed every mention, so there are no pattern names; the tag line
-    // carries only the edit marker.
+    // carries only the edit marker and the warning.
     [Fact]
     public void AC_F9_5_edit_reply_without_matching_patterns_shows_only_the_edit_marker()
     {
         var content = new NotificationContent([], "Відбій", "Test channel", _summerUtc, _summerUtc.AddMinutes(1), Link: null);
 
-        Format(content).Split('\n')[1].ShouldBe("✏️ оновлено");
+        Format(content).Split('\n')[0].ShouldBe("✏️ оновлено · ⚠️ Увага");
+    }
+
+    // C3: the disclaimer is part of every message, under the original text; the first line warns in push previews.
+    [Fact]
+    public void C3_every_message_carries_the_disclaimer_under_the_text_and_a_warning_on_the_first_line()
+    {
+        var formatted = Format(Content(text: "Шахед курсом на Краснопавлівку"));
+
+        formatted.Split('\n')[0].ShouldEndWith(NotificationFormatter.Warning);
+        formatted.ShouldContain("Шахед курсом на Краснопавлівку\n\n" + NotificationFormatter.Disclaimer + "\n──────────\n");
     }
 }

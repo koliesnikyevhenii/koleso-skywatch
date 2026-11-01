@@ -18,7 +18,14 @@ public static class NotificationFormatter
     /// <summary>Telegram's limit for one text message.</summary>
     public const int MaxLength = 4096;
 
-    public const string Disclaimer = "⚠️ Неперевірено · повідомлення з каналу третьої сторони. Не замінює офіційні сигнали тривоги.";
+    /// <summary>C3: the disclaimer, shown as a note under the original text.</summary>
+    public const string Disclaimer = "ℹ️ Неперевірене повідомлення з каналу третьої сторони. Не замінює офіційні сигнали тривоги.";
+
+    /// <summary>Ends the first line, so a push preview already shows the message needs care (C3).</summary>
+    public const string Warning = "⚠️ Увага";
+
+    /// <summary>Shown instead of the pattern names, which stay in the database and the daily report.</summary>
+    public const string Tag = "🏷 КП";
 
     private const string _ellipsis = "…";
 
@@ -26,11 +33,11 @@ public static class NotificationFormatter
     /// <param name="displayZone">AC-F8.12: the published time is shown in this zone, honouring DST.</param>
     public static string Format(NotificationContent content, DateTime sendAttemptAtUtc, TimeZoneInfo displayZone)
     {
-        var header = $"{Disclaimer}\n{TagLine(content)}\n\n";
+        var header = $"{TagLine(content)}\n\n";
 
         var published = TimeZoneInfo.ConvertTimeFromUtc(content.PublishedAtUtc, displayZone);
         var footer = new StringBuilder()
-            .Append("\n\n──────────\n")
+            .Append(CultureInfo.InvariantCulture, $"\n\n{Disclaimer}\n──────────\n")
             .Append(CultureInfo.InvariantCulture, $"📢 {content.SourceName}\n")
             .Append(CultureInfo.InvariantCulture, $"🕐 {published:HH:mm:ss} (опубл.) · затримка {DelaySeconds(content, sendAttemptAtUtc)} с");
         if (content.Link is not null)
@@ -44,14 +51,24 @@ public static class NotificationFormatter
 
     /// <summary>
     /// AC-F8.2. An edit reply (AC-F9.5) whose new text no longer matches has no pattern names: the line then carries
-    /// only the edit marker.
+    /// only the edit marker. The warning always ends the line.
     /// </summary>
     private static string TagLine(NotificationContent content)
     {
-        var edited = content.EditedAtUtc is null ? null : "✏️ оновлено";
-        return content.PatternNames.Count == 0
-            ? edited ?? "🏷"
-            : $"🏷 {string.Join(", ", content.PatternNames)}{(edited is null ? "" : $" · {edited}")}";
+        // Every pattern looks for the same village, and the readers don't know the pattern names: one short tag.
+        List<string> parts = [];
+        if (content.PatternNames.Count > 0)
+        {
+            parts.Add(Tag);
+        }
+
+        if (content.EditedAtUtc is not null)
+        {
+            parts.Add("✏️ оновлено");
+        }
+
+        parts.Add(Warning);
+        return string.Join(" · ", parts);
     }
 
     /// <summary>AC-F8.5 and AC-F7.3: whole seconds from publication, or from the edit for edit-triggered notifications.</summary>
