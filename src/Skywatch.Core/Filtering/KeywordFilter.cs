@@ -51,4 +51,58 @@ public sealed class KeywordFilter
 
         return new FilterResult(hits.Count > 0, hits);
     }
+
+    /// <summary>
+    /// AC-F8.14: every place an enabled pattern matches the original text, sorted and with overlaps merged. The
+    /// original is searched, not the normalized text, because normalization changes the length; a mention split by
+    /// an invisible character is then simply not highlighted.
+    /// </summary>
+    public IReadOnlyList<TextSpan> Highlights(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return [];
+        }
+
+        List<TextSpan> spans = [];
+        foreach (var (_, regex, _) in _patterns)
+        {
+            try
+            {
+                for (var match = regex.Match(text); match.Success; match = match.NextMatch())
+                {
+                    if (match.Length > 0)
+                    {
+                        spans.Add(new TextSpan(match.Index, match.Length));
+                    }
+                }
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                // Highlighting is cosmetic: the match itself already reported the timeout (AC-F5.10).
+            }
+        }
+
+        return Merge(spans);
+    }
+
+    private static List<TextSpan> Merge(List<TextSpan> spans)
+    {
+        spans.Sort((a, b) => a.Start.CompareTo(b.Start));
+        List<TextSpan> merged = [];
+        foreach (var span in spans)
+        {
+            if (merged.Count > 0 && span.Start <= merged[^1].End)
+            {
+                var last = merged[^1];
+                merged[^1] = last with { Length = Math.Max(last.End, span.End) - last.Start };
+            }
+            else
+            {
+                merged.Add(span);
+            }
+        }
+
+        return merged;
+    }
 }

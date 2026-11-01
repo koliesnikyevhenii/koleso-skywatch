@@ -35,7 +35,7 @@ public sealed class BotCallbackListenerTests : IDisposable
     public BotCallbackListenerTests()
     {
         _loggerFactory = LoggerFactory.Create(b => b.AddProvider(_logs));
-        var options = Microsoft.Extensions.Options.Options.Create(new NotificationOptions { Enabled = true, BotToken = _fakeToken, TargetChatId = _targetChatId, LabelerUserIds = [_labeler] });
+        var options = Microsoft.Extensions.Options.Options.Create(new NotificationOptions { Enabled = true, BotToken = _fakeToken, TargetChatId = _targetChatId, LabelingOpenToAll = false, LabelerUserIds = [_labeler] });
         var labels = new LabelService(_db, _sender, options, _time, _loggerFactory.CreateLogger<LabelService>());
         _listener = new BotCallbackListener(_bot, labels, options, _time, _loggerFactory.CreateLogger<BotCallbackListener>());
 

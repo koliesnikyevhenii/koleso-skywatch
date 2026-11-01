@@ -56,16 +56,28 @@ public sealed class MessageProcessorTests : IDisposable
     private MessageProcessor Processor(
         bool notificationsEnabled = true,
         bool storeUnmatchedText = true,
-        bool acrossSourcesOnly = true) =>
-        new(
+        bool acrossSourcesOnly = true,
+        bool followUps = true,
+        int followUpMax = 5)
+    {
+        var monitoring = Microsoft.Extensions.Options.Options.Create(new MonitoringOptions
+        {
+            ContentDuplicateAcrossSourcesOnly = acrossSourcesOnly,
+            FollowUpsEnabled = followUps,
+            FollowUpWindowMinutes = 120,
+            FollowUpMaxPerMessage = followUpMax,
+        });
+        return new(
             _db,
             new KeywordFilter([new PatternDefinition(_pattern, "краснопавлівк", CaseSensitive: false, Enabled: true)]),
-            new DuplicateDetector(Microsoft.Extensions.Options.Options.Create(new MonitoringOptions { ContentDuplicateAcrossSourcesOnly = acrossSourcesOnly })),
+            new DuplicateDetector(monitoring),
             _signal,
+            monitoring,
             Microsoft.Extensions.Options.Options.Create(new StorageOptions { StoreUnmatchedText = storeUnmatchedText }),
             Microsoft.Extensions.Options.Options.Create(new NotificationOptions { Enabled = notificationsEnabled }),
             _time,
             _loggerFactory.CreateLogger<MessageProcessor>());
+    }
 
     /// <summary>A new message received now, published <paramref name="ageSeconds"/> earlier.</summary>
     private IncomingMessage Message(long chatId, int id, string text = _alert, OriginKey? origin = null, int ageSeconds = 1) =>
@@ -372,5 +384,147 @@ public sealed class MessageProcessorTests : IDisposable
         (error.Kind, error.OccurredAtUtc).ShouldBe((ServiceEventKind.ProcessingError, Now));
         _logs.Entries.ShouldContain(e => e.Level == LogLevel.Error && e.Message.Contains("message 1"));
         _logs.Lines.ShouldNotContain(l => l.Contains(_alert));
+    }
+
+    /// <summary>A reply to message <paramref name="replyTo"/> in the same chat, published <paramref name="ageSeconds"/> ago.</summary>
+    private IncomingMessage Reply(long chatId, int id, int replyTo, string text = _unmatched, int ageSeconds = 1) =>
+        Message(chatId, id, text, ageSeconds: ageSeconds) with { ReplyToMessageId = replyTo };
+
+    /// <summary>The alert for message <paramref name="id"/> went out (the dispatcher's part, done by hand here).</summary>
+    private async Task MarkSentAsync(long chatId, int id)
+    {
+        await using var db = _db.CreateDbContext();
+        var notification = await db.Notifications.SingleAsync(
+            n => n.Message!.Source!.TelegramChatId == chatId && n.Message.TelegramMessageId == id && n.Kind == NotificationKind.New,
+            TestContext.Current.CancellationToken);
+        notification.Status = NotificationStatus.Sent;
+        notification.BotMessageId = 500 + id;
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+    }
+
+    // AC-F13.1: an unmatched reply to a post whose alert was sent is a follow-up: Pending, text stored even when
+    // unmatched text is not kept, linked to the original.
+    [Fact]
+    public async Task AC_F13_1_unmatched_reply_to_a_sent_alert_is_a_pending_follow_up()
+    {
+        var processor = Processor(storeUnmatchedText: false);
+        await ProcessAsync(processor, Message(_sourceA, 1));
+        await MarkSentAsync(_sourceA, 1);
+
+        (await ProcessAsync(processor, Reply(_sourceA, 2, replyTo: 1, "Не фіксується"))).ShouldBe(ProcessOutcome.Pending);
+
+        var row = await RowAsync(_sourceA, 2);
+        row.Text.ShouldBe("Не фіксується");
+        row.FollowUpOfMessageId.ShouldBe((await RowAsync(_sourceA, 1)).Id);
+        row.ReplyToTelegramMessageId.ShouldBe(1);
+        var notification = (await NotificationsAsync(_sourceA, 2)).ShouldHaveSingleItem();
+        (notification.Kind, notification.Status).ShouldBe((NotificationKind.FollowUp, NotificationStatus.Pending));
+    }
+
+    // AC-F13.1: no follow-up without a sent alert, for an unknown post, or after the window.
+    [Theory]
+    [InlineData("not sent")]
+    [InlineData("unknown")]
+    [InlineData("out of window")]
+    public async Task AC_F13_1_reply_without_a_sent_alert_in_the_window_is_plain_unmatched(string situation)
+    {
+        var processor = Processor();
+        await ProcessAsync(processor, Message(_sourceA, 1));
+        if (situation != "not sent")
+        {
+            await MarkSentAsync(_sourceA, 1);
+        }
+
+        if (situation == "out of window")
+        {
+            _time.Advance(TimeSpan.FromMinutes(121));
+        }
+
+        var replyTo = situation == "unknown" ? 99 : 1;
+        (await ProcessAsync(processor, Reply(_sourceA, 2, replyTo))).ShouldBe(ProcessOutcome.Unmatched);
+
+        (await NotificationsAsync(_sourceA, 2)).ShouldBeEmpty();
+        (await RowAsync(_sourceA, 2)).FollowUpOfMessageId.ShouldBeNull();
+    }
+
+    // AC-F13.1: a reply in another source with the same message id is not a follow-up of this source's post.
+    [Fact]
+    public async Task AC_F13_1_reply_in_another_source_is_not_a_follow_up()
+    {
+        var processor = Processor();
+        await ProcessAsync(processor, Message(_sourceA, 1));
+        await MarkSentAsync(_sourceA, 1);
+
+        (await ProcessAsync(processor, Reply(_sourceB, 2, replyTo: 1))).ShouldBe(ProcessOutcome.Unmatched);
+    }
+
+    // AC-F13.1: a reply to a follow-up continues the same original.
+    [Fact]
+    public async Task AC_F13_1_reply_to_a_follow_up_belongs_to_the_same_original()
+    {
+        var processor = Processor();
+        await ProcessAsync(processor, Message(_sourceA, 1));
+        await MarkSentAsync(_sourceA, 1);
+        await ProcessAsync(processor, Reply(_sourceA, 2, replyTo: 1));
+
+        (await ProcessAsync(processor, Reply(_sourceA, 3, replyTo: 2, "Відбій"))).ShouldBe(ProcessOutcome.Pending);
+
+        (await RowAsync(_sourceA, 3)).FollowUpOfMessageId.ShouldBe((await RowAsync(_sourceA, 1)).Id);
+    }
+
+    // AC-F13.2: past the limit, follow-ups are stored and linked but not notified.
+    [Fact]
+    public async Task AC_F13_2_follow_ups_past_the_limit_get_no_notification()
+    {
+        var processor = Processor(followUpMax: 2);
+        await ProcessAsync(processor, Message(_sourceA, 1));
+        await MarkSentAsync(_sourceA, 1);
+
+        (await ProcessAsync(processor, Reply(_sourceA, 2, replyTo: 1))).ShouldBe(ProcessOutcome.Pending);
+        (await ProcessAsync(processor, Reply(_sourceA, 3, replyTo: 1))).ShouldBe(ProcessOutcome.Pending);
+        (await ProcessAsync(processor, Reply(_sourceA, 4, replyTo: 1))).ShouldBe(ProcessOutcome.Unmatched);
+
+        (await NotificationsAsync(_sourceA, 4)).ShouldBeEmpty();
+        (await RowAsync(_sourceA, 4)).FollowUpOfMessageId.ShouldNotBeNull();
+        _logs.Entries.ShouldContain(e => e.Message.Contains("follow-up") && e.Message.Contains("over the limit"));
+    }
+
+    // AC-F13.4: a follow-up older than the staleness limit is SkippedStale.
+    [Fact]
+    public async Task AC_F13_4_stale_follow_up_is_skipped_stale()
+    {
+        var processor = Processor();
+        await ProcessAsync(processor, Message(_sourceA, 1));
+        await MarkSentAsync(_sourceA, 1);
+
+        (await ProcessAsync(processor, Reply(_sourceA, 2, replyTo: 1, ageSeconds: 121))).ShouldBe(ProcessOutcome.SkippedStale);
+
+        (await NotificationsAsync(_sourceA, 2)).ShouldHaveSingleItem().Status.ShouldBe(NotificationStatus.SkippedStale);
+    }
+
+    // AC-F13.5: a reply that matches itself is a normal match.
+    [Fact]
+    public async Task AC_F13_5_matching_reply_is_a_normal_match()
+    {
+        var processor = Processor();
+        await ProcessAsync(processor, Message(_sourceA, 1));
+        await MarkSentAsync(_sourceA, 1);
+
+        (await ProcessAsync(processor, Reply(_sourceA, 2, replyTo: 1, "Другий на Краснопавлівку"))).ShouldBe(ProcessOutcome.Pending);
+
+        (await NotificationsAsync(_sourceA, 2)).ShouldHaveSingleItem().Kind.ShouldBe(NotificationKind.New);
+        (await RowAsync(_sourceA, 2)).FollowUpOfMessageId.ShouldBeNull();
+    }
+
+    // AC-F13.6: with follow-ups off, a reply is handled as before.
+    [Fact]
+    public async Task AC_F13_6_follow_ups_off_reply_is_plain_unmatched()
+    {
+        var processor = Processor(followUps: false);
+        await ProcessAsync(processor, Message(_sourceA, 1));
+        await MarkSentAsync(_sourceA, 1);
+
+        (await ProcessAsync(processor, Reply(_sourceA, 2, replyTo: 1))).ShouldBe(ProcessOutcome.Unmatched);
+        (await NotificationsAsync(_sourceA, 2)).ShouldBeEmpty();
     }
 }

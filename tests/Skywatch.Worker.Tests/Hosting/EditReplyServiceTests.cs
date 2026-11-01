@@ -39,10 +39,11 @@ public sealed class EditReplyServiceTests : IDisposable
         var monitoring = Microsoft.Extensions.Options.Options.Create(new MonitoringOptions { EditHandling = EditHandling.ReplyOnChange });
         var notifications = Microsoft.Extensions.Options.Options.Create(new NotificationOptions { Enabled = true });
         _replies = new EditReplyService(_db, _signal, monitoring, _time, _loggerFactory.CreateLogger<EditReplyService>());
-        _dispatcher = new NotificationDispatchService(_db, _sender, _signal, notifications, _kyiv, _time, _loggerFactory.CreateLogger<NotificationDispatchService>());
+        var filter = new KeywordFilter([new PatternDefinition("Settlement", "краснопавлівк", CaseSensitive: false, Enabled: true)]);
+        _dispatcher = new NotificationDispatchService(_db, _sender, filter, _signal, notifications, _kyiv, _time, _loggerFactory.CreateLogger<NotificationDispatchService>());
         _handler = new EditHandler(
             _db,
-            new KeywordFilter([new PatternDefinition("Settlement", "краснопавлівк", CaseSensitive: false, Enabled: true)]),
+            filter,
             new DuplicateDetector(monitoring),
             _signal,
             _replies,
@@ -151,7 +152,7 @@ public sealed class EditReplyServiceTests : IDisposable
         sent.Notification.Priority.ShouldBe(SendPriority.Alert);
         sent.Notification.LabelNotificationId.ShouldBeNull(); // AC-F10.1: the reply carries no buttons
         sent.Notification.Text.ShouldContain(_alert + " фінал");
-        sent.Notification.Text.ShouldContain("🏷 Settlement · ✏️ оновлено");
+        sent.Notification.Text.ShouldContain("🏷 КП · ✏️ оновлено · ⚠️ Увага");
         sent.Notification.Text.ShouldContain("затримка 15 с");
 
         _time.Advance(TimeSpan.FromMinutes(1));

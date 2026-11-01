@@ -27,7 +27,7 @@ internal sealed class DailyReportBuilder(IDbContextFactory<SkywatchDbContext> db
             .Select(m => new { m.IsMatched, m.MatchedPatterns, m.IsDuplicate, m.DuplicateReason, m.PublishedAtUtc, m.ReceivedAtUtc })
             .ToListAsync(ct);
         var notifications = await db.Notifications.AsNoTracking()
-            .Where(n => n.CreatedAtUtc >= start && n.CreatedAtUtc < end && n.Kind != NotificationKind.EditReply)
+            .Where(n => n.CreatedAtUtc >= start && n.CreatedAtUtc < end && n.Kind != NotificationKind.EditReply && n.Kind != NotificationKind.FollowUp) // AC-F13.7
             .Select(n => new { n.Kind, n.Status, n.Label, n.SentAtUtc, n.Message!.ReceivedAtUtc, n.Message.MatchedPatterns })
             .ToListAsync(ct);
 

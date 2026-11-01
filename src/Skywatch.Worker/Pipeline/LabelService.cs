@@ -28,6 +28,9 @@ internal enum LabelOutcome
 
     /// <summary>AC-F10.8: storing the press failed; it is still answered.</summary>
     Failed,
+
+    /// <summary>AC-F10.11: labeling is turned off; a press on an older message changes nothing.</summary>
+    Disabled,
 }
 
 /// <summary>One button press, mapped from a Telegram callback query by <see cref="BotCallbackListener"/>.</summary>
@@ -88,7 +91,8 @@ internal static class LabelButtons
 
 /// <summary>
 /// Spec F10: stores a labeler's verdict on a sent match notification, one new context per press. A press counts
-/// only from <c>Notifications:TargetChatId</c> by a user in <c>Notifications:LabelerUserIds</c>.
+/// only from <c>Notifications:TargetChatId</c> by a user in <c>Notifications:LabelerUserIds</c>, or by anyone there
+/// with <c>Notifications:LabelingOpenToAll</c> (AC-F10.10).
 /// </summary>
 internal sealed partial class LabelService(
     IDbContextFactory<SkywatchDbContext> dbFactory,
@@ -102,6 +106,7 @@ internal sealed partial class LabelService(
     public const string MalformedAnswer = "Невідома дія";
     public const string UnknownAnswer = "Сповіщення не знайдено";
     public const string FailedAnswer = "Помилка, спробуйте ще раз";
+    public const string DisabledAnswer = "Позначки вимкнено";
 
     /// <summary>AC-F10.2–F10.5: never throws for bad input; every press is answered.</summary>
     public async Task<LabelOutcome> HandleAsync(LabelPress press, CancellationToken ct)
@@ -135,6 +140,11 @@ internal sealed partial class LabelService(
 
     private async Task<LabelOutcome> DecideAsync(LabelPress press, CancellationToken ct)
     {
+        if (!options.Value.LabelingEnabled)
+        {
+            return LabelOutcome.Disabled;
+        }
+
         if (press.ChatId != options.Value.TargetChatId)
         {
             LogForeignChat(logger, press.UserId, press.ChatId);
@@ -144,7 +154,7 @@ internal sealed partial class LabelService(
         if (!LabelButtons.TryParse(press.Data, out var notificationId, out var label))
         {
             LogMalformed(logger, press.UserId, press.ChatId, press.Data);
-            return options.Value.LabelerUserIds.Contains(press.UserId) ? LabelOutcome.Malformed : LabelOutcome.Unauthorized;
+            return options.Value.CanLabel(press.UserId) ? LabelOutcome.Malformed : LabelOutcome.Unauthorized;
         }
 
         return await ApplyAsync(notificationId, label, press.UserId, press.BotMessageId, ct);
@@ -156,7 +166,7 @@ internal sealed partial class LabelService(
     /// </summary>
     public async Task<LabelOutcome> ApplyAsync(long notificationId, NotificationLabel label, long userId, int? botMessageId, CancellationToken ct)
     {
-        if (!options.Value.LabelerUserIds.Contains(userId))
+        if (!options.Value.CanLabel(userId))
         {
             LogUnauthorized(logger, userId, notificationId);
             return LabelOutcome.Unauthorized;
@@ -192,6 +202,7 @@ internal sealed partial class LabelService(
             LabelOutcome.Unauthorized => UnauthorizedAnswer,
             LabelOutcome.Malformed => MalformedAnswer,
             LabelOutcome.Failed => FailedAnswer,
+            LabelOutcome.Disabled => DisabledAnswer,
             _ => UnknownAnswer,
         };
         var result = await sender.AnswerCallbackAsync(press.CallbackQueryId, text, ct);

@@ -107,7 +107,7 @@ public sealed class DailyReportBuilderTests : IDisposable
         AddMessage(_end, 1, "Settlement");
 
         var t = _start;
-        AddMessage(t, 1);
+        AddNotification(AddMessage(t, 1), NotificationStatus.Sent, NotificationKind.FollowUp, sentAfterSeconds: 1); // AC-F13.7: not counted
         AddMessage(t.AddHours(1), 2);
         var useful = AddMessage(t.AddHours(2), 3, "Settlement");
         AddNotification(useful, NotificationStatus.Sent, label: NotificationLabel.Useful, sentAfterSeconds: 0.5);

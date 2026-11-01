@@ -21,7 +21,7 @@ The MVP exists to **measure**: filter precision, match volume, duplicate frequen
 
 These are non-negotiable. Violating one is a defect regardless of what a phase says.
 
-- **C1** — The system detects *mentions* of configured names. It MUST NOT infer coordinates, predict flight paths, track military activity or air-defence positions, or map movement reports.
+- **C1** — The system detects *mentions* of configured names. It MUST NOT infer coordinates, predict flight paths, track military activity or air-defence positions, or map movement reports. Relaying a source's own reply to a post that was notified, verbatim and without interpretation (F13), is not movement mapping (D15).
 - **C2** — Notifications go only to the single configured private test group. There is no public target in this release.
 - **C3** — Every match notification carries a disclaimer that the content is unverified third-party information and is not a substitute for official air-raid alerts.
 - **C4** — No secrets or identifying configuration in git: API id/hash, phone, 2FA password, bot token, chat ids, source list, labeler user ids, session file, database.
@@ -149,14 +149,14 @@ Default patterns:
 ### F8. Notification delivery
 
 - **AC-F8.1** — A single consumer sends `Pending` notifications sequentially, in creation order.
-- **AC-F8.2** — Message format (plain text, no parse mode):
+- **AC-F8.2** — Message format (plain text, no parse mode; pattern names are not shown, they stay in the database and the daily report):
 
   ```text
-  ⚠️ Неперевірено · повідомлення з каналу третьої сторони. Не замінює офіційні сигнали тривоги.
-  🏷 {PatternNames, comma-separated}{ · ✏️ оновлено, if edit-triggered}
+  🏷 КП{ · ✏️ оновлено, if edit-triggered} · ⚠️ Увага
 
   {original text}
 
+  ℹ️ Неперевірене повідомлення з каналу третьої сторони. Не замінює офіційні сигнали тривоги.
   ──────────
   📢 {Source name}
   🕐 {published time HH:mm:ss, display time zone} (опубл.) · затримка {N} с
@@ -173,6 +173,7 @@ Default patterns:
 - **AC-F8.11** — At startup all `Pending` notifications are re-queued in creation order, after the staleness check.
 - **AC-F8.12** — Times are shown in `Notifications:DisplayTimeZone` (default `Europe/Kyiv`), honouring DST.
 - **AC-F8.13** — `protected-content` (`noforwards`) sources get the same full-text format as others (decision D4).
+- **AC-F8.14** — Every place an enabled pattern matches the original text is shown in bold (overlaps merged). Bold goes out as message entities (UTF-16 offsets), never through a parse mode, so the text of a post cannot break the message. A highlight is cut where the text is truncated (F8.4); a mention that matches only after normalization (e.g. split by an invisible character) is sent without bold.
 
 ### F9. Edited messages
 
@@ -190,12 +191,14 @@ Default patterns:
 - **AC-F10.1** — Every sent match notification (not summaries or reports) carries inline buttons `✅ Корисно`, `❌ Хибне`, `🔁 Дубль`.
 - **AC-F10.2** — A press by a user in `Notifications:LabelerUserIds` stores `Label`, `LabeledByUserId`, `LabeledAtUtc` on the notification, answers the callback, and edits the buttons to mark the chosen one with `✔`.
 - **AC-F10.3** — Pressing a different button overwrites the label; the latest label wins.
-- **AC-F10.4** — A press by any other user changes nothing and answers the callback with `Немає прав`.
+- **AC-F10.4** — With `LabelingOpenToAll = false`, a press by any other user changes nothing and answers the callback with `Немає прав`.
 - **AC-F10.5** — Callback data is `lbl:{notificationId}:{u|f|d}`. Malformed data or an unknown notification id is answered and logged at `Warning`, without throwing.
 - **AC-F10.6** — Bot callbacks are received via long polling in a hosted service in the same Worker process.
 - **AC-F10.7** — A press counts only when the notification was `Sent` as the very message that was pressed (`BotMessageId`); otherwise it is answered `Сповіщення не знайдено` and nothing changes.
 - **AC-F10.8** — If storing a press fails, the press is still answered (`Помилка, спробуйте ще раз`) and the error is logged.
 - **AC-F10.9** — A 429 on `getUpdates` waits `retry_after` (at least the backoff). A 429 on answering a press does not hold back match notifications.
+- **AC-F10.10** — With `Notifications:LabelingOpenToAll = true` (the default; owner decision 2026-11-01) a press by any user in the target chat labels as a labeler would (F10.2, F10.3: the latest press wins); `LabelerUserIds` is then not needed. Presses from other chats are still ignored.
+- **AC-F10.11** — `Notifications:LabelingEnabled` (default `true`). When `false`, alerts are sent without label buttons and a press on an older message changes nothing and is answered `Позначки вимкнено`.
 
 ### F11. Daily report and metrics
 
@@ -213,6 +216,18 @@ A hosted service runs hourly.
 - **AC-F12.2** — Text of matched messages older than `Storage:RetentionDays` (default 7) is set to null.
 - **AC-F12.3** — `Messages`, `Notifications` and `ServiceEvents` rows older than `Storage:MetadataRetentionDays` (default 30) are deleted.
 - **AC-F12.4** — Age for retention is measured from `ReceivedAtUtc` (or `OccurredAtUtc` for service events).
+
+### F13. Follow-ups (replies to notified posts)
+
+A source often continues a post with a reply ("не фіксується", "повернув на …"). Such a reply rarely names the village, so it does not match.
+
+- **AC-F13.1** — A new, unmatched message that is a direct reply (Telegram `reply_to`, same chat) to a stored message of the same source whose alert (`New` or `EditNewMatch`) was `Sent` is a **follow-up** of that message, when it is published within `Monitoring:FollowUpWindowMinutes` (default 120) of the original. A reply to a follow-up belongs to the same original. It gets a `FollowUp` notification, `Pending`, in the same transaction as its row; its text is stored regardless of `Storage:StoreUnmatchedText`.
+- **AC-F13.2** — At most `Monitoring:FollowUpMaxPerMessage` (default 5) follow-ups are notified per original; later ones are stored and logged at `Information` without a notification.
+- **AC-F13.3** — A follow-up is sent as a reply to the original alert's bot message, without label buttons. Format: first line `↪️ Продовження · ⚠️ Увага`, then the text verbatim (with F8.14 bold, if it mentions the village), the disclaimer and the F8.2 footer. Nothing in the text is interpreted (C1).
+- **AC-F13.4** — Staleness (F7) is measured from the follow-up's own publication time.
+- **AC-F13.5** — A reply that matches a pattern itself is a normal match (F6), not a follow-up.
+- **AC-F13.6** — `Monitoring:FollowUpsEnabled` (default `true`) turns the feature off; then replies are handled as before.
+- **AC-F13.7** — Follow-ups are not counted in the daily report's match, label or latency figures.
 
 ---
 
@@ -242,6 +257,9 @@ Committed `appsettings.json` contains only non-identifying defaults. Identifying
     "ContentDuplicateAcrossSourcesOnly": true,
     "EditHandling": "NotifyOnNewMatch",
     "EditDebounceSeconds": 15,
+    "FollowUpsEnabled": true,               // F13
+    "FollowUpWindowMinutes": 120,
+    "FollowUpMaxPerMessage": 5,
     "Patterns": [ /* defaults from F5 */ ],
     "Sources": []               // identifying — not committed
   },
@@ -250,6 +268,8 @@ Committed `appsettings.json` contains only non-identifying defaults. Identifying
     "BotToken": "",             // secret
     "TargetChatId": 0,          // identifying
     "LabelerUserIds": [],       // identifying
+    "LabelingEnabled": true,    // AC-F10.11
+    "LabelingOpenToAll": true,  // AC-F10.10; false = only LabelerUserIds
     "MaxMessageAgeSeconds": 120,
     "MaxSendAttempts": 3,
     "DisplayTimeZone": "Europe/Kyiv"
@@ -278,7 +298,7 @@ All timestamps are UTC `DateTime` stored with a converter that guarantees `DateT
 
 **Sources** — `Id`, `TelegramChatId` (unique), `Name`, `Type` (Channel/Supergroup/Group), `Username?`, `NoForwards`, `IsEnabled`, `CreatedAtUtc`.
 
-**Messages** — `Id`, `SourceId`, `TelegramMessageId`, `Text?`, `PublishedAtUtc`, `ReceivedAtUtc`, `EditedAtUtc?`, `ContentHash`, `OriginChatId`, `OriginMessageId`, `IsMatched`, `MatchedPatterns?` (comma-separated names), `IsDuplicate`, `DuplicateOfMessageId?`, `DuplicateReason?` (Forward/SameText).
+**Messages** — `Id`, `SourceId`, `TelegramMessageId`, `Text?`, `PublishedAtUtc`, `ReceivedAtUtc`, `EditedAtUtc?`, `ContentHash`, `OriginChatId`, `OriginMessageId`, `IsMatched`, `MatchedPatterns?` (comma-separated names), `IsDuplicate`, `DuplicateOfMessageId?`, `DuplicateReason?` (Forward/SameText), `ReplyToTelegramMessageId?`, `FollowUpOfMessageId?` (F13).
 Indexes: unique `(SourceId, TelegramMessageId)`; `(ContentHash, ReceivedAtUtc)`; `(OriginChatId, OriginMessageId, ReceivedAtUtc)`; `ReceivedAtUtc`.
 
 **Notifications** — `Id`, `MessageId`, `Kind` (New/EditNewMatch/EditReply), `Status` (Pending/Sent/SkippedStale/SkippedDuplicate/Failed), `Attempts`, `CreatedAtUtc`, `SentAtUtc?`, `BotMessageId?`, `Error?`, `PossibleDuplicate`, `StaleReportedAtUtc?`, `Label?` (Useful/False/Duplicate), `LabeledByUserId?`, `LabeledAtUtc?`.
@@ -331,3 +351,4 @@ Web dashboard; mobile app; HTTP API; LLM classification; OCR; voice transcriptio
 | D12 | Projects `Skywatch.Core`, `Skywatch.Worker`, `Skywatch.Core.Tests`, `Skywatch.Worker.Tests`; solution `Skywatch.slnx`; `Dockerfile` at repo root. |
 | D13 | Only two abstractions over Telegram: `ITelegramUpdateSource`, `INotificationSender`; bounded `Channel<IncomingMessage>(1000)`. |
 | D14 | Personal account for local development; separate warmed-up account for the VPS experiment. Run modes `login` and `list-chats`. |
+| D15 | 2026-11-01, owner: follow-ups (F13) relay a source's own direct reply to a notified post, verbatim, within a time window and a per-post limit. No parsing of directions or targets, so C1 holds. |

@@ -27,6 +27,15 @@ internal sealed class MonitoringOptions
 
     /// <summary>AC-F9.5: quiet time after the last edit before the reply is created.</summary>
     public int EditDebounceSeconds { get; set; } = 15;
+
+    /// <summary>AC-F13.6: relay a source's replies to notified posts.</summary>
+    public bool FollowUpsEnabled { get; set; } = true;
+
+    /// <summary>AC-F13.1: how long after the original a reply still counts as its follow-up.</summary>
+    public int FollowUpWindowMinutes { get; set; } = 120;
+
+    /// <summary>AC-F13.2: follow-ups notified per original.</summary>
+    public int FollowUpMaxPerMessage { get; set; } = 5;
 }
 
 /// <summary>Spec F9 (decision D3).</summary>
@@ -102,6 +111,16 @@ internal sealed class MonitoringOptionsValidator : IValidateOptions<MonitoringOp
         if (options.EditDebounceSeconds <= 0)
         {
             failures.Add("Monitoring:EditDebounceSeconds must be greater than 0.");
+        }
+
+        if (options.FollowUpWindowMinutes <= 0)
+        {
+            failures.Add("Monitoring:FollowUpWindowMinutes must be greater than 0.");
+        }
+
+        if (options.FollowUpMaxPerMessage <= 0)
+        {
+            failures.Add("Monitoring:FollowUpMaxPerMessage must be greater than 0.");
         }
 
         ValidatePatterns(options.Patterns, failures);

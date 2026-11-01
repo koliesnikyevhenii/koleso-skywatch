@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Skywatch.Core.Filtering;
 using Skywatch.Core.Formatting;
 using Skywatch.Core.Time;
 using Skywatch.Worker.Options;
@@ -35,6 +36,7 @@ internal sealed class DispatchSignal
 internal sealed partial class NotificationDispatchService(
     IDbContextFactory<SkywatchDbContext> dbFactory,
     INotificationSender sender,
+    KeywordFilter filter,
     DispatchSignal signal,
     IOptions<NotificationOptions> options,
     TimeZoneInfo displayZone,
@@ -124,7 +126,8 @@ internal sealed partial class NotificationDispatchService(
         }
 
         var message = notification.Message!;
-        var editedAt = notification.Kind == NotificationKind.New ? null : message.EditedAtUtc;
+        // AC-F7.3 for edits; AC-F13.4: a follow-up is aged from its own publication, like a new message.
+        var editedAt = notification.Kind is NotificationKind.New or NotificationKind.FollowUp ? null : message.EditedAtUtc;
         var now = time.GetUtcNow().UtcDateTime;
         if (_staleness.IsStale(editedAt ?? message.PublishedAtUtc, now))
         {
@@ -140,15 +143,20 @@ internal sealed partial class NotificationDispatchService(
             message.Source!.Name,
             message.PublishedAtUtc,
             editedAt,
-            SourceLinkBuilder.Build(message.Source.TelegramChatId, message.Source.Username, message.TelegramMessageId));
-        var outgoing = new OutgoingNotification(NotificationFormatter.Format(content, now, displayZone), SendPriority.Alert);
+            SourceLinkBuilder.Build(message.Source.TelegramChatId, message.Source.Username, message.TelegramMessageId),
+            filter.Highlights(message.Text),
+            IsFollowUp: notification.Kind == NotificationKind.FollowUp);
+        var formatted = NotificationFormatter.Render(content, now, displayZone);
+        var outgoing = new OutgoingNotification(formatted.Text, SendPriority.Alert, Bold: formatted.Bold);
 
         SendResult result;
-        if (notification.Kind == NotificationKind.EditReply)
+        if (notification.Kind is NotificationKind.EditReply or NotificationKind.FollowUp)
         {
-            // AC-F9.5: a reply to the bot message of the alert about this message.
+            // AC-F9.5: a reply to the bot message of the alert about this message; AC-F13.3: for a follow-up, the
+            // alert about the original it continues. Neither carries label buttons.
+            var alertedMessageId = notification.Kind == NotificationKind.FollowUp ? message.FollowUpOfMessageId : message.Id;
             var replyTo = await db.Notifications
-                .Where(n => n.MessageId == message.Id && n.Kind != NotificationKind.EditReply && n.Status == NotificationStatus.Sent && n.BotMessageId != null)
+                .Where(n => n.MessageId == alertedMessageId && (n.Kind == NotificationKind.New || n.Kind == NotificationKind.EditNewMatch) && n.Status == NotificationStatus.Sent && n.BotMessageId != null)
                 .OrderBy(n => n.Id)
                 .Select(n => n.BotMessageId)
                 .FirstOrDefaultAsync(ct);
@@ -165,7 +173,8 @@ internal sealed partial class NotificationDispatchService(
         }
         else
         {
-            result = await sender.SendAsync(outgoing with { LabelNotificationId = notification.Id }, ct); // AC-F10.1
+            // AC-F10.1; AC-F10.11: no buttons while labeling is off.
+            result = await sender.SendAsync(outgoing with { LabelNotificationId = options.Value.LabelingEnabled ? notification.Id : null }, ct);
         }
 
         var wait = Apply(notification, result, now);

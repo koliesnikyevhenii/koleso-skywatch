@@ -1,3 +1,4 @@
+using Skywatch.Core.Filtering;
 using Skywatch.Worker.Persistence.Entities;
 
 namespace Skywatch.Worker.Telegram;
@@ -29,6 +30,7 @@ internal enum SendPriority
 
 /// <summary>
 /// Plain text, sent without a parse mode. With <see cref="LabelNotificationId"/> the message carries the label
-/// buttons for that notification (AC-F10.1).
+/// buttons for that notification (AC-F10.1). <see cref="Bold"/> spans go out as bold message entities (AC-F8.14):
+/// entities, unlike a parse mode, cannot be broken by the characters of a third-party post.
 /// </summary>
-internal sealed record OutgoingNotification(string Text, SendPriority Priority, long? LabelNotificationId = null);
+internal sealed record OutgoingNotification(string Text, SendPriority Priority, long? LabelNotificationId = null, IReadOnlyList<TextSpan>? Bold = null);

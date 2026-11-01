@@ -38,6 +38,14 @@ internal sealed class Message
     public Message? DuplicateOf { get; set; }
 
     public DuplicateReason? DuplicateReason { get; set; }
+
+    /// <summary>The Telegram id of the message this one replies to in the same chat (F13).</summary>
+    public int? ReplyToTelegramMessageId { get; set; }
+
+    /// <summary>AC-F13.1: the original message this follow-up continues; set to null when retention deletes it.</summary>
+    public long? FollowUpOfMessageId { get; set; }
+
+    public Message? FollowUpOf { get; set; }
 }
 
 internal enum DuplicateReason

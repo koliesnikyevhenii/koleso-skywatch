@@ -37,6 +37,7 @@ public sealed class SchemaTests : IDisposable
             [
                 "Id", "SourceId", "TelegramMessageId", "Text", "PublishedAtUtc", "ReceivedAtUtc", "EditedAtUtc", "ContentHash",
                 "OriginChatId", "OriginMessageId", "IsMatched", "MatchedPatterns", "IsDuplicate", "DuplicateOfMessageId", "DuplicateReason",
+                "ReplyToTelegramMessageId", "FollowUpOfMessageId",
             ]
         },
         {

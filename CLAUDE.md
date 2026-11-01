@@ -29,7 +29,7 @@ Experimental .NET 10 Worker that reads allowlisted Telegram channels/groups (WTe
 - **Delivery:** outbox pattern. Create the `Pending` notification in the same transaction as the message, then a single dispatcher sends it. Recheck staleness before every send.
 - **Abstractions:** don't add interfaces for pure classes, generic repositories, MediatR, Polly, AutoMapper or Serilog.
 - **Async:** every async method takes a `CancellationToken` and passes it on.
-- **Bot messages:** plain text, no parse mode. Notification and label strings are Ukrainian.
+- **Bot messages:** plain text, no parse mode; bold only as message entities (AC-F8.14). Notification and label strings are Ukrainian.
 
 ## Tests
 
