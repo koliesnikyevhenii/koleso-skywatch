@@ -13,7 +13,7 @@ This document is the source of truth. Where it conflicts with the source idea do
 
 ## 1. Purpose
 
-Skywatch is an **experimental** .NET 10 Worker Service that listens to an allowlist of Telegram channels and groups, detects mentions of the village of **Krasnopavlivka** (Kharkiv oblast, Lozova district) in Ukrainian and Russian text, removes duplicates, and posts unique matches to a **private test group** via a Telegram bot.
+Skywatch is an **experimental** .NET 10 Worker Service that listens to an allowlist of Telegram channels and groups, detects mentions of the village of **Krasnopavlivka** (Kharkiv oblast, Lozova district) in Ukrainian and Russian text, removes duplicates, and posts unique matches to a **private test group or channel** via a Telegram bot.
 
 The MVP exists to **measure**: filter precision, match volume, duplicate frequency, notification noise and end-to-end latency over a 3–7 day run. A decision on any wider use is made only after that.
 
@@ -22,7 +22,7 @@ The MVP exists to **measure**: filter precision, match volume, duplicate frequen
 These are non-negotiable. Violating one is a defect regardless of what a phase says.
 
 - **C1** — The system detects *mentions* of configured names. It MUST NOT infer coordinates, predict flight paths, track military activity or air-defence positions, or map movement reports. Relaying a source's own reply to a post that was notified, verbatim and without interpretation (F13), is not movement mapping (D15).
-- **C2** — Notifications go only to the single configured private test group. There is no public target in this release.
+- **C2** — Notifications go only to the single configured private test chat (`Notifications:TargetChatId`): a private group or a private channel, without a public username and with membership by invitation only. There is no public target in this release.
 - **C3** — Every match notification carries a disclaimer that the content is unverified third-party information and is not a substitute for official air-raid alerts.
 - **C4** — No secrets or identifying configuration in git: API id/hash, phone, 2FA password, bot token, chat ids, source list, labeler user ids, session file, database.
 - **C5** — Secrets, auth codes, session data and API hashes are never logged.
@@ -36,7 +36,7 @@ These are non-negotiable. Violating one is a defect regardless of what a phase s
 | Source | An allowlisted Telegram channel, supergroup or basic group the reader account is a member of |
 | Reader account | The Telegram *user* account Skywatch logs in as over MTProto (WTelegramClient) to read sources |
 | Bot | The Telegram bot (Telegram.Bot) that posts into the test group |
-| Test group | The private Telegram group receiving notifications |
+| Test group | The private Telegram chat receiving notifications: a private group or a private channel (C2) |
 | Labeler | A Telegram user allowed to press label buttons |
 | Pattern | A named, configurable regular expression that defines a match |
 | Origin key | `(chatId, messageId)` of the original post — the forward source if the message is a forward, else the message itself |
@@ -47,7 +47,7 @@ These are non-negotiable. Violating one is a defect regardless of what a phase s
 
 - **Development:** the owner's personal Telegram account as the reader account, on the owner's Windows machine.
 - **Experiment:** a separate dedicated reader account (own phone number, warmed up manually), running on a Linux VPS in Docker.
-- The bot is created via @BotFather and added to the test group.
+- The bot is created via @BotFather and added to the test group. In a channel the bot must be an administrator with the right to post messages.
 
 ---
 
